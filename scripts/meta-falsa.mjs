@@ -23,6 +23,7 @@ export function criarMetaFalsa(o = {}) {
     videosFb: new Map(), // id -> { tipo, recebido, publicado }
     fotosFb: new Map(),
     publicacoes: [], // { rede, tipo, id, legenda, conteiner }
+    links: [], // file_url que a Meta baixou
     chamadas: [], // { metodo, caminho, auth }
     perdeuResposta: new Set(),
     conferenciasAteFinished: o.conferenciasAteFinished ?? 1,
@@ -51,16 +52,20 @@ export function criarMetaFalsa(o = {}) {
       const certo = m[1] === "ig-api-upload" ? estado.token : TOKEN_PAGINA;
       if (auth !== `OAuth ${certo}`) return erro(190, "Invalid OAuth access token", 0, 401);
       if (!alvo) return json({ debug_info: { type: "NotFound", message: "upload session not found" } }, 404);
-      // Envio retomável: cada parte começa onde a anterior parou (offset); o vídeo só conta como recebido quando chega a file_size.
-      const offset = Number(req.headers.get("offset") ?? 0), total = Number(req.headers.get("file_size"));
-      if (offset !== (alvo.parcial ?? 0)) return json({ debug_info: { type: "ProcessingFailedError", message: "offset mismatch" } }, 400);
+      // Arquivo hospedado (file_url): a Meta baixa do link. Sem file_url, o corpo é o vídeo inteiro, com file_size igual ao recebido.
+      const link = req.headers.get("file_url");
       let recebido = 0;
-      for await (const parte of req.body) recebido += parte.length;
-      if (!recebido || offset + recebido > total) return json({ debug_info: { type: "ProcessingFailedError", message: "file_size mismatch" } }, 400);
-      alvo.parcial = offset + recebido;
-      estado.partes = (estado.partes ?? 0) + 1;
-      if (alvo.parcial < total) return json({ success: true });
-      alvo.recebido = total;
+      if (link) {
+        const r = o.baixar ? await o.baixar(link) : null;
+        if (!r?.ok) return json({ debug_info: { type: "ProcessingFailedError", message: "could not download file_url" } }, 400);
+        if (r.headers.get("content-length") === null) return json({ debug_info: { type: "ProcessingFailedError", message: "missing content-length" } }, 400);
+        recebido = (await r.arrayBuffer()).byteLength;
+        estado.links.push(link);
+      } else {
+        for await (const parte of req.body) recebido += parte.length;
+        if (String(recebido) !== req.headers.get("file_size")) return json({ debug_info: { type: "ProcessingFailedError", message: "file_size mismatch" } }, 400);
+      }
+      alvo.recebido = recebido;
       if (alvo.status) alvo.status = "IN_PROGRESS";
       return json({ success: true });
     }

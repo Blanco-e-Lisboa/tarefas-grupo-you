@@ -27,6 +27,7 @@ export function criarBanco(env: (n: string) => string | undefined, buscar: Busca
       (await rest.ler<Card>("tarefas", { id: tarefa }, "id,titulo,legenda,formato,postar_redes,capa_quadro_ms"))[0],
     arquivos: async (tarefa: string) =>
       (await rest.ler<Arq>("arquivos", { tarefa_id: tarefa }, "id,nome,tipo,drive_id,caminho,tamanho,ordem,papel")).sort((a, b) => a.ordem - b.ordem),
+    arquivo: async (id: string) => (await rest.ler<Arq>("arquivos", { id }, "id,nome,tipo,drive_id,caminho,tamanho,ordem,papel"))[0],
     gravar: (id: string, campos: Record<string, unknown>) => rest.atualizar("postagens", { id }, campos),
     redes: (tarefa: string) => rest.ler<{ rede: Rede; status: string; link: string | null }>("postagens", { tarefa_id: tarefa }, "rede,status,link"),
     /** Só move se ainda está em Aprovado; o banco arma a limpeza de 7 dias e desarma o alarme de postar. */

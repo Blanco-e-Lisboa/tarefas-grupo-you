@@ -36,10 +36,10 @@ export function criarMeta(o: { base: string; rupload: string; token: string; fet
       ler<T>(await o.fetch(`${o.base}/${caminho}?fields=${encodeURIComponent(campos)}`, { headers: cab(token) })),
     post: async <T>(caminho: string, campos: Record<string, string | number | boolean | undefined>, token = o.token) =>
       ler<T>(await o.fetch(`${o.base}/${caminho}`, { method: "POST", headers: cab(token), body: corpo(campos) })),
-    /** Uma parte do vídeo a partir de `offset` (envio retomável). Corpo em bytes, com tamanho conhecido: o Deno manda todo fluxo
-        (ReadableStream) "chunked", sem content-length, e o rupload recusou com 400 (28/10). `tipo`: ig-api-upload ou video-upload. */
-    async enviar(tipo: "ig-api-upload" | "video-upload", id: string, bytes: Uint8Array, offset: number, tamanho: number, token = o.token) {
-      const init = { method: "POST", headers: { authorization: `OAuth ${token}`, offset: String(offset), file_size: String(tamanho) }, body: bytes as BodyInit };
+    /** Vídeo hospedado: o cabeçalho `file_url` diz à Meta de onde BAIXAR o vídeo (caminho documentado para arquivo hospedado,
+        no Instagram e no Facebook). Nada do vídeo passa pela função. `tipo`: ig-api-upload ou video-upload. */
+    async enviarLink(tipo: "ig-api-upload" | "video-upload", id: string, link: string, token = o.token) {
+      const init = { method: "POST", headers: { authorization: `OAuth ${token}`, file_url: link } };
       const j = await ler<{ success?: boolean }>(await o.fetch(`${o.rupload}/${tipo}/${VERSAO}/${id}`, init));
       if (j.success === false) throw new ErroMeta(200, 0, 0, "a Meta não confirmou o recebimento do vídeo");
     },

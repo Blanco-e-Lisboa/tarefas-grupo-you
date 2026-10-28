@@ -1,8 +1,8 @@
 // Função `postar-meta`: o alarme do card (019) chama; ela responde 202 na hora e trabalha em segundo plano.
 // Sem Deno aqui dentro (index.ts liga o servidor): roda igual no Vitest com o banco, o Drive e a Meta falsos.
 // Log: só tarefa, rede, etapa e código. Nunca a chave, nunca o pedido inteiro.
-import { iguais } from "../_shared/google.ts";
-import { criarBanco, type Banco, type Card, type Linha } from "./banco.ts";
+import { assinar, conferir, iguais } from "../_shared/google.ts";
+import { criarBanco, type Arq, type Banco, type Card, type Linha } from "./banco.ts";
 import { criarMeta, ErroDescartado, ErroIncerto, ErroLocal, traduzir, VERSAO } from "./meta.ts";
 import { facebook, instagram, type Ctx, type Resultado } from "./redes.ts";
 
@@ -24,6 +24,8 @@ export const RODADAS_MAX = 5;
 const PRAZO_MS = 300_000; // a função vive até 400 s; conferências dentro da mesma execução param em 5 min
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const vazio = (status: number) => new Response(null, { status });
+const VALIDADE_LINK = 2 * 3600_000; // a Meta baixa o vídeo no tempo dela; cobre as rodadas de conferência (5 x 12 min)
+const textoLink = (arquivo: string, ate: number) => `video.${arquivo}.${ate}`; // prefixo próprio: não vale como link da função drive
 
 const CORS = {
   "access-control-allow-origin": "*",
@@ -40,8 +42,35 @@ export function criarManipulador(d: Deps) {
     if (!r?.ok) return new Response(JSON.stringify({ erro: "Entre no sistema." }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
     return new Response(JSON.stringify({ deVerdade: d.env("POSTAR_DE_VERDADE") === "sim" }), { status: 200, headers: { ...CORS, "content-type": "application/json" } });
   }
+  /** O link que a Meta baixa (file_url): só com assinatura válida e dentro do prazo. Entrega o vídeo INTEIRO do Drive (ou o pedaço
+      que a Meta pedir por Range), com o tamanho que o Drive informa. */
+  async function servirVideo(req: Request): Promise<Response> {
+    const q = new URL(req.url).searchParams;
+    const id = q.get("video") ?? "", ate = Number(q.get("ate")), sig = q.get("sig") ?? "";
+    const banco = criarBanco(d.env, d.fetch);
+    const segredo = await banco.segredo("tarefas_funcoes_segredo").catch(() => null);
+    if (!segredo || !(ate > (d.agora ?? Date.now)()) || !(await conferir(segredo, textoLink(id, ate), sig))) return vazio(403);
+    const a = await banco.arquivo(id).catch(() => undefined); // id já veio assinado por nós
+    if (!a?.drive_id || a.tipo !== "video") return vazio(404);
+    const r = await d.baixarDrive(a.drive_id, req.headers.get("range") ?? undefined).catch(() => null);
+    if (!r) return vazio(502);
+    const h = new Headers({ "accept-ranges": "bytes" });
+    for (const n of ["content-type", "content-length", "content-range"]) { const v = r.headers.get(n); if (v) h.set(n, v); }
+    // Log do que a Meta pediu e de quanto foi entregue (só números: nada do link nem da chave)
+    const escrever = d.log ?? ((l: string) => console.log(l));
+    const pedido = { etapa: "link", arquivo: id, metodo: req.method, range: req.headers.get("range"), status: r.status, tamanho: h.get("content-length"), tipo: h.get("content-type") };
+    if (req.method === "HEAD") { await r.body?.cancel(); escrever(JSON.stringify(pedido)); return new Response(null, { status: r.status, headers: h }); }
+    let enviado = 0;
+    const contar = new TransformStream<Uint8Array, Uint8Array>({
+      transform(parte, c) { enviado += parte.length; c.enqueue(parte); },
+      flush() { escrever(JSON.stringify({ ...pedido, enviado, fim: "completo" })); },
+      cancel() { escrever(JSON.stringify({ ...pedido, enviado, fim: "cortado" })); },
+    } as Transformer<Uint8Array, Uint8Array>);
+    return new Response(r.body?.pipeThrough(contar), { status: r.status, headers: h });
+  }
   return async (req: Request): Promise<Response> => {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+    if ((req.method === "GET" || req.method === "HEAD") && new URL(req.url).searchParams.has("video")) return servirVideo(req);
     if (req.method !== "POST") return vazio(405);
     if (req.headers.get("x-tarefas-segredo") === null && (await req.clone().json().catch(() => null))?.acao === "modo") return modo(req);
     const certo = await criarBanco(d.env, d.fetch).segredo("tarefas_funcoes_segredo").catch(() => null);
@@ -85,6 +114,13 @@ export function criarTrabalho(d: Deps) {
     const [card, arqs] = await Promise.all([banco.card(tarefa), banco.arquivos(tarefa)]);
     let tokenPg: Promise<string> | undefined; // chave da página: pedida uma vez, só em memória
     const tokenPagina = () => (tokenPg ??= meta.get<{ access_token: string }>(pageId, "access_token").then((r) => r.access_token));
+    let segredoLink: Promise<string | null> | undefined;
+    const linkVideo = async (a: Arq) => {
+      const s = await (segredoLink ??= banco.segredo("tarefas_funcoes_segredo"));
+      if (!s) throw new ErroLocal("Falta o segredo das funções no banco (tarefas_funcoes_segredo).");
+      const ate = agora() + VALIDADE_LINK;
+      return `${d.env("SUPABASE_URL")}/functions/v1/postar-meta?video=${a.id}&ate=${ate}&sig=${await assinar(s, textoLink(a.id, ate))}`;
+    };
     const copias: string[] = [];
 
     async function umaRede(l: Linha): Promise<Fim> {
@@ -96,7 +132,7 @@ export function criarTrabalho(d: Deps) {
         if (l.rodadas > RODADAS_MAX) throw new ErroLocal("Estado incerto: a postagem travou (a Meta não terminou de processar ou a função caiu várias vezes). Confira a rede antes de tentar de novo.");
         const c: Ctx = {
           meta, banco, card, arqs, linha: l, verdade: d.env("POSTAR_DE_VERDADE") === "sim", igId, pageId, prazo, agora, dormir,
-          baixarDrive: d.baixarDrive, paraJpg: d.paraJpg, tokenPagina, copias, log: logRede,
+          baixarDrive: d.baixarDrive, paraJpg: d.paraJpg, tokenPagina, linkVideo, copias, log: logRede,
           salvar: async (conteiner) => {
             await banco.gravar(l.id, { conteiner_id: conteiner });
             l.conteiner_id = conteiner;

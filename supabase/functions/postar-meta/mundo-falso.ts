@@ -49,6 +49,7 @@ export function mundo(o: { verdade?: boolean; conferencias?: number; env?: Recor
 
   const rotear = (async (entrada: RequestInfo | URL, init?: RequestInit) => {
     const u = new URL(entrada instanceof Request ? entrada.url : String(entrada));
+    if (u.origin === URL_FALSA && u.pathname === "/functions/v1/postar-meta") return manipulador(new Request(entrada, init)); // o link do vídeo (file_url)
     if (u.origin === URL_FALSA && u.pathname.startsWith("/storage/")) return storage(new Request(entrada, init));
     if (u.origin === URL_FALSA) return b.fetch(entrada, init);
     if (u.origin === BASE_FALSA) return g.fetch(entrada, init);
@@ -100,6 +101,8 @@ export function mundo(o: { verdade?: boolean; conferencias?: number; env?: Recor
     waitUntil: () => {}, agora: () => t, dormir: async (ms) => { t += ms; }, log: (l) => void logs.push(l),
   };
 
+  const manipulador = criarManipulador(deps);
+
   /** Card de Postagem da You em Aprovado com os anexos dados (vão para o Drive falso). */
   function card(c: Linha, anexos: { tipo: string; bytes: Uint8Array; papel?: string; nome?: string }[]) {
     b.estado.tabelas.tarefas.push({ id: TAREFA, titulo: "Card de teste", tipo: "postagem", empresa_id: "you", etapa: "aprovado", legenda: "Legenda do post", postar_redes: ["instagram", "facebook"], capa_quadro_ms: null, ...c });
@@ -111,7 +114,7 @@ export function mundo(o: { verdade?: boolean; conferencias?: number; env?: Recor
   const linha = (rede: string) => b.estado.tabelas.postagens.find((p) => p.rede === rede);
   return {
     b, g, meta, balde, removidos, avisos, alarmes, logs, corposRupload, card, linha, env: ENV,
-    trabalhar: criarTrabalho(deps), manipulador: criarManipulador(deps), deps,
+    trabalhar: criarTrabalho(deps), manipulador, deps,
     conversoes: () => conversoes, avancar: (ms: number) => { t += ms; },
     etapa: () => b.estado.tabelas.tarefas[0]?.etapa,
   };

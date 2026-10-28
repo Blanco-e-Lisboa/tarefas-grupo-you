@@ -151,23 +151,29 @@ describe("postar-meta: Reels, Story e carrossel", () => {
     expect(c.campos).toMatchObject({ media_type: "REELS", upload_type: "resumable", cover_url: expect.any(String) });
     expect(c.campos.thumb_offset).toBeUndefined();
     expect(c.recebido).toBe(300_000);
-    // 28/10: fluxo (ReadableStream) sai "chunked" e o rupload recusa; vai em partes de bytes, cada uma com tamanho conhecido
-    expect(m.corposRupload.length).toBeGreaterThan(0);
-    expect(m.corposRupload.every((b) => b instanceof Uint8Array && b.length <= 8 * 1024 * 1024)).toBe(true);
+    // 28/10: caminho oficial de arquivo hospedado: o vídeo não vai no corpo, a Meta baixa pelo link assinado (file_url)
+    expect(m.corposRupload.every((b) => b === undefined)).toBe(true);
+    expect(m.meta.estado.links).toHaveLength(2); // Instagram e Facebook
+    expect(m.meta.estado.links.every((l: string) => l.includes("/functions/v1/postar-meta?video=a0&ate=") && l.includes("&sig="))).toBe(true);
     expect(pubs(m, "facebook")[0]).toMatchObject({ tipo: "video_reels" });
     expect(m.linha("facebook")?.link).toContain("facebook.com/reel/");
     expect(m.etapa()).toBe("postado");
   });
 
-  it("vídeo maior que 8 MB vai em várias partes, cada uma do ponto onde a anterior parou, e chega inteiro", async () => {
+  it("link do vídeo: entrega o arquivo inteiro com o tamanho; assinatura errada ou vencida, 403; arquivo que não é vídeo, 404", async () => {
     const m = mundo();
-    const total = 8 * 1024 * 1024 * 2 + 12_345; // 3 partes
-    m.card({ formato: "reels" }, [{ tipo: "video", bytes: video(total) }]);
+    m.card({ formato: "reels" }, [{ tipo: "video", bytes: video(50_000) }, { tipo: "imagem", bytes: JPG, papel: "capa" }]);
     await m.trabalhar(TAREFA);
-    const [c] = [...m.meta.estado.conteineres.values()];
-    expect(c.recebido).toBe(total);
-    expect(m.corposRupload.filter((b) => b instanceof Uint8Array && b.length === 8 * 1024 * 1024)).toHaveLength(4); // 2 partes cheias no Instagram + 2 no Facebook
-    expect(m.etapa()).toBe("postado");
+    const link = m.meta.estado.links[0] as string;
+    const ok = await m.manipulador(new Request(link));
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("content-length")).toBe("50000");
+    expect((await ok.arrayBuffer()).byteLength).toBe(50_000);
+    expect((await m.manipulador(new Request(link, { method: "HEAD" }))).headers.get("content-length")).toBe("50000");
+    expect((await m.manipulador(new Request(link.replace(/sig=\w+/, `sig=${"0".repeat(64)}`)))).status).toBe(403);
+    expect((await m.manipulador(new Request(link.replace("video=a0", "video=a1")))).status).toBe(403); // a assinatura é do vídeo, não vale para a capa
+    m.avancar(3 * 3600_000);
+    expect((await m.manipulador(new Request(link))).status).toBe(403); // venceu (2 h)
   });
 
   it("Reels sem capa própria com quadro escolhido: thumb_offset", async () => {

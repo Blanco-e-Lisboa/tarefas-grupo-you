@@ -14,6 +14,7 @@ export type Ctx = {
   baixarDrive: (driveId: string, range?: string) => Promise<Response>;
   paraJpg: (png: Uint8Array) => Promise<Uint8Array>;
   tokenPagina: () => Promise<string>;
+  linkVideo: (a: Arq) => Promise<string>;
   salvar: (conteiner: string) => Promise<void>;
   copias: string[];
   log: (etapa: string, codigo?: string | number) => void;
@@ -57,18 +58,11 @@ async function urlImagem(c: Ctx, a: Arq, rede: "instagram" | "facebook"): Promis
   return c.banco.guardarParaMeta(caminho, bytes, jpg ? "image/jpeg" : "image/png");
 }
 
-const PARTE_VIDEO = 8 * 1024 * 1024;
-/** Vídeo do Drive para a Meta em partes de 8 MB (Range no Drive, offset no rupload): só uma parte por vez na memória. */
+/** Vídeo do Drive para a Meta pelo caminho oficial de arquivo hospedado: a Meta baixa pelo link assinado desta função
+    (ver servirVideo em estado.ts), que entrega o arquivo inteiro do Drive com o tamanho certo. */
 async function enviarVideo(c: Ctx, tipo: "ig-api-upload" | "video-upload", id: string, a: Arq, token?: string) {
   if (!a.drive_id) throw new ErroLocal(`O vídeo "${a.nome}" não está no Drive.`);
-  let total = a.tamanho;
-  for (let ini = 0; ini < total; ini += PARTE_VIDEO) {
-    const r = await c.baixarDrive(a.drive_id, `bytes=${ini}-${Math.min(ini + PARTE_VIDEO, total) - 1}`);
-    total = Number(/\/(\d+)$/.exec(r.headers.get("content-range") ?? "")?.[1]) || total; // o Drive diz o tamanho real
-    const parte = new Uint8Array(await r.arrayBuffer());
-    if (!parte.length) throw new ErroLocal(`O Drive não entregou o vídeo "${a.nome}".`);
-    await c.meta.enviar(tipo, id, parte, ini, total, token);
-  }
+  await c.meta.enviarLink(tipo, id, await c.linkVideo(a), token);
   c.log("enviou-video");
 }
 
@@ -171,7 +165,12 @@ async function videoFb(c: Ctx, vid: string, pedido: boolean, token: string): Pro
       throw new ErroDescartado(200, 0, 0, "a Meta não conseguiu processar o vídeo");
     }
     if (!pedido) {
-      if (s.uploading_phase?.status && s.uploading_phase.status !== "complete") throw new ErroDescartado(200, 0, 0, "o envio do vídeo ao Facebook não terminou");
+      // file_url: a Meta baixa o vídeo do link no tempo dela; enquanto baixa, espera (como no processamento)
+      if (s.uploading_phase?.status && s.uploading_phase.status !== "complete") {
+        if (c.agora() + ESPERA > c.prazo) return processando(`video:${vid}`);
+        await c.dormir(ESPERA);
+        continue;
+      }
       if (!c.verdade) return { fim: "teste" };
       await c.salvar(`video-pub:${vid}`);
       pedido = true;
