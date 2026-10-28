@@ -95,7 +95,7 @@ export function mundo(o: { verdade?: boolean; conferencias?: number; env?: Recor
   const env = (n: string) => ENV[n];
   const google = criarGoogle({ env, fetch: rotear, agora: () => t });
   const deps: Deps = {
-    env, fetch: rotear, baixarDrive: (id) => google.baixarDoDrive(id),
+    env, fetch: rotear, baixarDrive: (id, range) => google.baixarDoDrive(id, range),
     paraJpg: async (png) => { conversoes++; return Uint8Array.of(...JPG, ...png.slice(4)); },
     waitUntil: () => {}, agora: () => t, dormir: async (ms) => { t += ms; }, log: (l) => void logs.push(l),
   };

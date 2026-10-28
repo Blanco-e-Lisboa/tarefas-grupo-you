@@ -11,7 +11,7 @@ export type Ctx = {
   meta: Meta; banco: Banco; card: Card; arqs: Arq[]; linha: Linha;
   verdade: boolean; igId: string; pageId: string; prazo: number;
   agora: () => number; dormir: (ms: number) => Promise<void>;
-  baixarDrive: (driveId: string) => Promise<Response>;
+  baixarDrive: (driveId: string, range?: string) => Promise<Response>;
   paraJpg: (png: Uint8Array) => Promise<Uint8Array>;
   tokenPagina: () => Promise<string>;
   salvar: (conteiner: string) => Promise<void>;
@@ -57,11 +57,18 @@ async function urlImagem(c: Ctx, a: Arq, rede: "instagram" | "facebook"): Promis
   return c.banco.guardarParaMeta(caminho, bytes, jpg ? "image/jpeg" : "image/png");
 }
 
-/** Vídeo do Drive para a Meta em fluxo: o corpo da resposta do Drive vira o corpo do envio, sem passar pela memória inteira. */
+const PARTE_VIDEO = 8 * 1024 * 1024;
+/** Vídeo do Drive para a Meta em partes de 8 MB (Range no Drive, offset no rupload): só uma parte por vez na memória. */
 async function enviarVideo(c: Ctx, tipo: "ig-api-upload" | "video-upload", id: string, a: Arq, token?: string) {
   if (!a.drive_id) throw new ErroLocal(`O vídeo "${a.nome}" não está no Drive.`);
-  const r = await c.baixarDrive(a.drive_id);
-  await c.meta.enviar(tipo, id, r.body!, Number(r.headers.get("content-length")) || a.tamanho, token);
+  let total = a.tamanho;
+  for (let ini = 0; ini < total; ini += PARTE_VIDEO) {
+    const r = await c.baixarDrive(a.drive_id, `bytes=${ini}-${Math.min(ini + PARTE_VIDEO, total) - 1}`);
+    total = Number(/\/(\d+)$/.exec(r.headers.get("content-range") ?? "")?.[1]) || total; // o Drive diz o tamanho real
+    const parte = new Uint8Array(await r.arrayBuffer());
+    if (!parte.length) throw new ErroLocal(`O Drive não entregou o vídeo "${a.nome}".`);
+    await c.meta.enviar(tipo, id, parte, ini, total, token);
+  }
   c.log("enviou-video");
 }
 

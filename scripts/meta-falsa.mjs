@@ -51,10 +51,16 @@ export function criarMetaFalsa(o = {}) {
       const certo = m[1] === "ig-api-upload" ? estado.token : TOKEN_PAGINA;
       if (auth !== `OAuth ${certo}`) return erro(190, "Invalid OAuth access token", 0, 401);
       if (!alvo) return json({ debug_info: { type: "NotFound", message: "upload session not found" } }, 404);
+      // Envio retomável: cada parte começa onde a anterior parou (offset); o vídeo só conta como recebido quando chega a file_size.
+      const offset = Number(req.headers.get("offset") ?? 0), total = Number(req.headers.get("file_size"));
+      if (offset !== (alvo.parcial ?? 0)) return json({ debug_info: { type: "ProcessingFailedError", message: "offset mismatch" } }, 400);
       let recebido = 0;
-      for await (const parte of req.body) recebido += parte.length; // lê em fluxo, como a Meta
-      if (String(recebido) !== req.headers.get("file_size")) return json({ debug_info: { type: "ProcessingFailedError", message: "file_size mismatch" } }, 400);
-      alvo.recebido = recebido;
+      for await (const parte of req.body) recebido += parte.length;
+      if (!recebido || offset + recebido > total) return json({ debug_info: { type: "ProcessingFailedError", message: "file_size mismatch" } }, 400);
+      alvo.parcial = offset + recebido;
+      estado.partes = (estado.partes ?? 0) + 1;
+      if (alvo.parcial < total) return json({ success: true });
+      alvo.recebido = total;
       if (alvo.status) alvo.status = "IN_PROGRESS";
       return json({ success: true });
     }

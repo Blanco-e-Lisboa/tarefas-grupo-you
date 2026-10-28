@@ -10,7 +10,7 @@ type Busca = typeof fetch;
 export type Deps = {
   env: (n: string) => string | undefined;
   fetch: Busca;
-  baixarDrive: (driveId: string) => Promise<Response>;
+  baixarDrive: (driveId: string, range?: string) => Promise<Response>;
   paraJpg: (png: Uint8Array) => Promise<Uint8Array>;
   waitUntil: (p: Promise<unknown>) => void;
   agora?: () => number;
@@ -105,7 +105,8 @@ export function criarTrabalho(d: Deps) {
         r = l.rede === "instagram" ? await instagram(c) : await facebook(c);
       } catch (e) {
         const t = traduzir(e, token);
-        logRede("erro", (e as { codigo?: number }).codigo ?? (e instanceof Error ? e.name : "desconhecido"));
+        // A mensagem vai junto (já sem chave nem links, ver traduzir): erro que volta para a fila não grava nada no banco (1º teste, 28/10)
+        logRede("erro", `${(e as { codigo?: number }).codigo ?? (e instanceof Error ? e.name : "desconhecido")} · ${t.erro}`);
         // O rascunho só sai quando a Meta o descartou ou o Natham vai conferir (estado incerto). Fora isso ele fica, e a retomada
         // (inclusive o Tentar de novo) confere na Meta antes de publicar: uma falha passageira nunca vira um segundo post.
         const rascunho = e instanceof ErroDescartado || e instanceof ErroIncerto ? { conteiner_id: null } : {};

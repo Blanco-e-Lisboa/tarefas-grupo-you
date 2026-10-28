@@ -23,8 +23,9 @@ export function criarMeta(o: { base: string; rupload: string; token: string; fet
   const cab = (token: string) => ({ authorization: `Bearer ${token}` });
 
   async function ler<T>(r: Response): Promise<T> {
-    const j = (await r.json().catch(() => ({}))) as { error?: { code?: number; error_subcode?: number; message?: string } };
-    if (!r.ok || j.error) throw new ErroMeta(r.status, j.error?.code ?? 0, j.error?.error_subcode ?? 0, j.error?.message ?? `HTTP ${r.status}`);
+    // O rupload responde erro em `debug_info`, não em `error` (1º teste real, 28/10: só chegava "HTTP 400")
+    const j = (await r.json().catch(() => ({}))) as { error?: { code?: number; error_subcode?: number; message?: string }; debug_info?: { message?: string } };
+    if (!r.ok || j.error) throw new ErroMeta(r.status, j.error?.code ?? 0, j.error?.error_subcode ?? 0, j.error?.message ?? j.debug_info?.message ?? `HTTP ${r.status}`);
     return j as T;
   }
   const corpo = (campos: Record<string, string | number | boolean | undefined>) =>
@@ -35,10 +36,11 @@ export function criarMeta(o: { base: string; rupload: string; token: string; fet
       ler<T>(await o.fetch(`${o.base}/${caminho}?fields=${encodeURIComponent(campos)}`, { headers: cab(token) })),
     post: async <T>(caminho: string, campos: Record<string, string | number | boolean | undefined>, token = o.token) =>
       ler<T>(await o.fetch(`${o.base}/${caminho}`, { method: "POST", headers: cab(token), body: corpo(campos) })),
-    /** Bytes do vídeo em fluxo (o corpo do Drive passa direto, sem `arrayBuffer`). `tipo`: ig-api-upload ou video-upload. */
-    async enviar(tipo: "ig-api-upload" | "video-upload", id: string, bytes: ReadableStream<Uint8Array>, tamanho: number, token = o.token) {
-      const init = { method: "POST", headers: { authorization: `OAuth ${token}`, offset: "0", file_size: String(tamanho) }, body: bytes, duplex: "half" };
-      const j = await ler<{ success?: boolean }>(await o.fetch(`${o.rupload}/${tipo}/${VERSAO}/${id}`, init as RequestInit));
+    /** Uma parte do vídeo a partir de `offset` (envio retomável). Corpo em bytes, com tamanho conhecido: o Deno manda todo fluxo
+        (ReadableStream) "chunked", sem content-length, e o rupload recusou com 400 (28/10). `tipo`: ig-api-upload ou video-upload. */
+    async enviar(tipo: "ig-api-upload" | "video-upload", id: string, bytes: Uint8Array, offset: number, tamanho: number, token = o.token) {
+      const init = { method: "POST", headers: { authorization: `OAuth ${token}`, offset: String(offset), file_size: String(tamanho) }, body: bytes as BodyInit };
+      const j = await ler<{ success?: boolean }>(await o.fetch(`${o.rupload}/${tipo}/${VERSAO}/${id}`, init));
       if (j.success === false) throw new ErroMeta(200, 0, 0, "a Meta não confirmou o recebimento do vídeo");
     },
   };

@@ -151,9 +151,22 @@ describe("postar-meta: Reels, Story e carrossel", () => {
     expect(c.campos).toMatchObject({ media_type: "REELS", upload_type: "resumable", cover_url: expect.any(String) });
     expect(c.campos.thumb_offset).toBeUndefined();
     expect(c.recebido).toBe(300_000);
-    expect(m.corposRupload.every((b) => b instanceof ReadableStream)).toBe(true); // nada de arrayBuffer no meio
+    // 28/10: fluxo (ReadableStream) sai "chunked" e o rupload recusa; vai em partes de bytes, cada uma com tamanho conhecido
+    expect(m.corposRupload.length).toBeGreaterThan(0);
+    expect(m.corposRupload.every((b) => b instanceof Uint8Array && b.length <= 8 * 1024 * 1024)).toBe(true);
     expect(pubs(m, "facebook")[0]).toMatchObject({ tipo: "video_reels" });
     expect(m.linha("facebook")?.link).toContain("facebook.com/reel/");
+    expect(m.etapa()).toBe("postado");
+  });
+
+  it("vídeo maior que 8 MB vai em várias partes, cada uma do ponto onde a anterior parou, e chega inteiro", async () => {
+    const m = mundo();
+    const total = 8 * 1024 * 1024 * 2 + 12_345; // 3 partes
+    m.card({ formato: "reels" }, [{ tipo: "video", bytes: video(total) }]);
+    await m.trabalhar(TAREFA);
+    const [c] = [...m.meta.estado.conteineres.values()];
+    expect(c.recebido).toBe(total);
+    expect(m.corposRupload.filter((b) => b instanceof Uint8Array && b.length === 8 * 1024 * 1024)).toHaveLength(4); // 2 partes cheias no Instagram + 2 no Facebook
     expect(m.etapa()).toBe("postado");
   });
 

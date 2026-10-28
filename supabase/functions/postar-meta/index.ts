@@ -7,7 +7,7 @@ import { paraJpg } from "./jpg.ts";
 Deno.serve(criarManipulador({
   env,
   fetch: (...a) => fetch(...a),
-  baixarDrive: (id) => baixarDoDrive(id),
+  baixarDrive: (id, range) => baixarDoDrive(id, range),
   paraJpg,
   waitUntil: (p) => EdgeRuntime.waitUntil(p),
 }));
