@@ -6,6 +6,8 @@ import { assinar, lerEmpresas, lerErro, lerEu, lerFazendo, lerTags, lerTarefas }
 export * from "./tipos";
 export { salvarTarefa, removerTarefa, salvarEmpresa, salvarTag, editarTag, excluirTag, recarregarTags, contarCardsDaTag, limparErro, lerErro, comecar, parar, podeAlterar, podeApagar, postarAgora, tentarDeNovo } from "./repositorio";
 export { postando } from "./postagens";
+export { podeMarcar } from "./repositorio-regras";
+export { marcarFeita } from "./marcar-feita";
 
 // Na hidratação vale o que o servidor desenhou: nada carregado. Se o 3º argumento lesse os dados vivos, a tela que hidrata depois
 // de os dados chegarem (código atrasado, servidor recém-ligado) montava com eles e dava o erro React #418 (item 177, achado 4 do pedido).

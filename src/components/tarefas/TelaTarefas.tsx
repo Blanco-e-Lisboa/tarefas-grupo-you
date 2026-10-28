@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { PointerEvent as EventoPonteiro } from "react";
 import { flushSync } from "react-dom";
 import type { CSSProperties } from "react";
-import { comoNatham, marcarEventoFeito, podeAlterar, podeApagar, removerTarefa, salvarTarefa, useAgendaEventos, useEventosFeitos, type CorLinha, type Etiqueta, type Responsavel, useEmpresas, useEu, useTarefas, type Tarefa } from "@/lib/dados";
+import { comoNatham, marcarEventoFeito, marcarFeita, podeAlterar, podeApagar, podeMarcar, removerTarefa, salvarTarefa, useAgendaEventos, useEventosFeitos, type CorLinha, type Etiqueta, type Responsavel, useEmpresas, useEu, useTarefas, type Tarefa } from "@/lib/dados";
 import { Selecao } from "@/components/ui/Selecao";
 import { Pessoa } from "@/components/ui/Pessoa";
 import { useFiltroEmpresa } from "@/lib/filtro-empresa";
@@ -108,6 +108,7 @@ export function TelaTarefas() {
     enviadaPara: enviadaPorMim(t, de) && t.dono ? NOMES[t.dono] : undefined,
     daPauta: t.planejadaId ? true : undefined,
     podeAlterar: podeAlterar(t, eu),
+    podeMarcar: podeMarcar(t, eu),
     podeApagar: podeApagar(t, eu) && !ehConteudo(t), // 287: card de conteúdo só se apaga pela Esteira
     bloco: linhasDoBloco(grade, k),
     duracao: duracaoDe(t),
@@ -306,7 +307,7 @@ export function TelaTarefas() {
                se podeAlterar (a privada dele fica só leitura, a que o Natham enviou edita) */
             key={de ?? ""} /* trocar de caderno zera o Responsável escolhido: a próxima nasce do dono do caderno aberto */
             aoAbrir={(id) => setAberta(tarefas.find((t) => t.id === id) ?? null)}
-            aoMarcar={(id) => { if (id.startsWith("ev:")) { const ev = id.slice(3); return void marcarEventoFeito(ev, !eventosFeitos.has(ev)); } const t = tarefas.find((x) => x.id === id); if (t) void salvarTarefa({ ...t, concluida: !t.concluida }); }}
+            aoMarcar={(id) => { if (id.startsWith("ev:")) { const ev = id.slice(3); return void marcarEventoFeito(ev, !eventosFeitos.has(ev)); } const t = tarefas.find((x) => x.id === id); if (t) void (podeAlterar(t, eu) ? salvarTarefa({ ...t, concluida: !t.concluida }) : marcarFeita(t.id, !t.concluida)); }}
             aoApagar={(id) => { if (!ehConteudo(tarefas.find((x) => x.id === id) ?? ({} as Tarefa))) void removerTarefa(id); }}
             continua={aba === "semdata"}
             aoMover={aba === "dia" ? moverPara : moverSemData}

@@ -106,6 +106,7 @@ const tarefas = [
   tarefa("Mandar a logo nova ao Matheus", { inicio: em(Math.min(diaHoje + 1, 6), "15:30"), cor: "etiqueta-5" }),
   tarefa("Separar fotos do evento", { inicio: em(7, "11:00"), cor: "etiqueta-5" }),
   tarefa("Pensar em ideias para dezembro", { cor: "etiqueta-5" }),
+  tarefa("Editar vídeos do Matheus", { inicio: em(diaHoje, "10:00"), dono_id: P.matheus, responsavel_id: P.matheus, enviada_por: P.natham, cor: "etiqueta-5" }), // 031: enviada pelo Natham
 ];
 const idDe = (titulo) => tarefas.find((t) => t.titulo === titulo).id;
 // Conteúdos Postados: uns há menos de 7 dias (aparecem nas Pastas e dizem quando vencem), outros há 8 (os arquivos já foram limpos, só o card fica no Mapa)
@@ -122,7 +123,6 @@ postadoHa("Reels: cliente da You conta como foi", 8, "18:00", "tema-reuniao");
 colocar("Reels: bastidores da You", { ocasiao_id: "tema-reuniao" });
 colocar("Reels: contabilidade sem mistério", { ocasiao_id: "tema-reuniao" });
 colocar("Post: bem-vindo à Beec", { ocasiao_id: "tema-beec" });
-
 const fazendoAgora = [{ pessoa_id: P.matheus, tarefa_id: idDe("Reels: bastidores do escritório"), desde: new Date(Date.now() - 25 * 60_000).toISOString() }];
 
 // ---- anexos e capas (imagens de mentira que este servidor mesmo desenha)
@@ -178,7 +178,6 @@ arquivos.push(
 );
 const postagens = ["Reels: cliente da You conta como foi", "Reels: depoimento da Maria", "Carrossel: 5 dicas de MEI", "Post: aviso de feriado", "TikTok: o que é pró-labore", "Reels: MEI em 1 minuto"].flatMap((titulo, i) =>
   IG_FB.map((rede) => ({ tarefa_id: idDe(titulo), rede, status: "postado", link: `https://www.${rede}.com/exemplo/${i}`, erro: null, postado_em: new Date(`${tarefas.find((t) => t.id === idDe(titulo)).inicio}:00-03:00`).toISOString() })));
-
 const hojeTexto = em(diaHoje);
 const anotacoesDia = [{ dono_id: P.natham, dia: hojeTexto, texto: "Gravar o Reels das 11h com o Matheus.\nConferir a legenda do carrossel do pró-labore." }];
 const naoEsquecer = [{ dono_id: P.natham, dia: hojeTexto, texto: "Ligar para o contador antes das 10h." }];
@@ -280,6 +279,7 @@ createServer(async (req, res) => {
     if (i >= 0) tarefas[i] = { ...tarefas[i], ...nova }; else tarefas.push(nova);
     return res.writeHead(204).end();
   }
+  if (rpc === "marcar_feita") { const { p_tarefa, p_feita } = await corpoDe(req); const t = tarefas.find((x) => x.id === p_tarefa); if (t) t.concluida = p_feita; return res.writeHead(204).end(); } // 031
   // 238: o interruptor da postagem automática (a cópia de exemplo fica DESLIGADA; para ver ligada: EXEMPLO_POSTAGEM_AUTOMATICA=1 npm run exemplo)
   if (rpc === "marcar_video_pendente" || rpc === "liberar_video_pendente" || rpc === "video_pendente") { // 270 achado 5 (027, passo 8): marca "vídeo novo pendente"
     const { p_tarefa } = await corpoDe(req), t = tarefas.find((x) => x.id === p_tarefa);

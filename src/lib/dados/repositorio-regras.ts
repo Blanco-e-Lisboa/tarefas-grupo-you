@@ -26,6 +26,8 @@ export const paraBanco = (t: Tarefa, responsavelId: string | undefined) => ({
 /** Espelha as travas do banco (009). Tarefa ENVIADA: só quem enviou altera; quem recebeu só lê. Não enviada: o dono, ou qualquer um se for conteúdo com empresa. */
 export const podeAlterar = (t: Tarefa, eu: Responsavel | null) =>
   !!eu && (t.enviadaPor ? t.enviadaPor === eu : t.dono === eu || (!!t.etapa && !!t.empresaId));
+/** 031 · Marcar "feita": quem pode alterar, e também quem RECEBEU a tarefa enviada (o dono). */
+export const podeMarcar = (t: Tarefa, eu: Responsavel | null) => podeAlterar(t, eu) || (!!eu && t.dono === eu);
 /** Quem pode APAGAR (019): enviada = quem enviou; não enviada = o dono; e conteúdo com empresa, também o Natham e o Matheus (lixeira e Concluir). */
 export const podeApagar = (t: Tarefa, eu: Responsavel | null) =>
   !!eu && ((t.enviadaPor ?? t.dono) === eu || (!!t.etapa && !!t.empresaId && (eu === "natham" || eu === "matheus")));

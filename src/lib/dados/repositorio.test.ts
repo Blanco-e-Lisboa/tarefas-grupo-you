@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { etapaAoSalvar } from "@/components/ficha/arrumar";
 import { campoOcasiao, daLinha, funcaoAusente, motivoDoBanco, paraBanco, podeAlterar, podeApagar, postadoEmDe, trocarFazendo } from "./repositorio";
+import { podeMarcar } from "./repositorio-regras";
 
 const quem = (id: string | null) => ({ a: "natham", b: "matheus" } as const)[id as "a" | "b"];
 const linha: Parameters<typeof daLinha>[0] = {
@@ -67,6 +68,9 @@ describe("quem pode mexer na tarefa (espelha o banco)", () => {
   it("enviada: quem enviou edita e apaga; quem recebeu só lê", () => {
     expect([podeAlterar(base, "natham"), podeApagar(base, "natham")]).toEqual([true, true]);
     expect([podeAlterar(base, "matheus"), podeApagar(base, "matheus")]).toEqual([false, false]);
+  });
+  it("enviada: quem recebeu marca feita (031); quem não é dono nem enviou, não", () => {
+    expect([podeMarcar(base, "matheus"), podeMarcar(base, "natham"), podeMarcar(base, "adrian"), podeMarcar(base, null)]).toEqual([true, true, false, false]);
   });
   it("enviada com empresa: quem recebeu continua só lendo, mas a lixeira do conteúdo é do Natham e do Matheus (019)", () => {
     const c = { ...base, etapa: "roteiro" as const, empresaId: "you" };

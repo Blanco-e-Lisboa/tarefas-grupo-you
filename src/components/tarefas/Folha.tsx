@@ -18,7 +18,8 @@ export type LinhaFolha = { id: string; /** Item 296: cor da linha inteira. */ co
   /** Item 283: "13:30–14:30" de todo bloco de mais de 30 min, discreto ao lado do nome. */ intervalo?: string;
   /** Linha de baixo de uma tarefa longa: não desenha nada, só reserva o lugar. */ ocupada?: boolean;
   /** Minutos da tarefa e o máximo que cabe até o fim das linhas (0 = sem hora, o menu não oferece duração). */ duracao?: number; duracaoMax?: number; /** Item 279: maior duração oferecida (até 6h, até o fim do dia) e onde começa o que bloqueia as maiores que cabem. */ duracaoLimite?: number; ocupadoAs?: string;
-  /** false = só leitura para quem está olhando (trava do banco). Vazio = pode. */ podeAlterar?: boolean; podeApagar?: boolean };
+  /** false = só leitura para quem está olhando (trava do banco). Vazio = pode. */ podeAlterar?: boolean; podeApagar?: boolean;
+  /** 031: quem recebeu a tarefa enviada marca feita mesmo sem poder alterar. Vazio = segue o podeAlterar. */ podeMarcar?: boolean };
 export type Opcao = { id: string; nome: string };
 const NENHUMA = "nenhuma"; // valor do seletor; a tarefa sem empresa guarda empresaId ""
 const HORAS = Array.from({ length: SLOTS }, (_, k) => horaDoSlot(k));
@@ -181,7 +182,7 @@ export function Folha({ letra, titulo, subtitulo, linhas, faixa, rotulos, vazio,
             <span className="linha-miolo" aria-hidden="true" />
           ) : l ? (
             <div className="linha-miolo" data-reuniao={l.reuniao || undefined} style={{ transform: `rotate(${giro(l.id)}deg)` }}>
-              <Caixa l={l} estourando={estourando === l.id} desabilitada={!aoMarcar || (l.podeAlterar === false && !l.compromisso)} aoClicar={() => marcar(l)} />
+              <Caixa l={l} estourando={estourando === l.id} desabilitada={!aoMarcar || ((l.podeMarcar ?? l.podeAlterar) === false && !l.compromisso)} aoClicar={() => marcar(l)} />
               <span className="linha-texto">
                 {/* O espaço da logo é reservado mesmo sem empresa: os títulos ficam todos alinhados na mesma coluna (item 164). */}
                 <span className="linha-empresa">{l.empresa && <SeloEmpresa empresaId={l.empresa.id} nome={l.empresa.nome} tamanho={20} />}</span>
