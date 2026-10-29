@@ -1,16 +1,16 @@
 "use client";
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
-import { podeAlterar, salvarTarefa, useAgendaEventos, useEu, usePostagensCalendario, useTarefas, type NovaTarefa, type Tarefa } from "@/lib/dados";
+import { avisarFalha, podeAlterar, salvarTarefa, useAgendaEventos, useEu, usePostagensCalendario, useTarefas, type NovaTarefa, type Tarefa } from "@/lib/dados";
 import { useFiltroEmpresa } from "@/lib/filtro-empresa";
 import { Ficha, tarefaEmBranco } from "@/components/ficha/Ficha";
 import { Ano } from "./Ano";
 import { Evento, useSoltar, type Acoes } from "./Evento";
 import { BarraFiltros, passa, passaEvento, SEM_FILTROS, type Filtros } from "./Filtros";
 import { Grade } from "./Grade";
-import { agendaPorDia, comMinuto, diasDaSemana, diasDoMes, esperarFimDoArraste, mover, paraHora, porDia, tituloPeriodo, VISOES, type Destino, type Visao } from "./logica";
+import { agendaPorDia, avisoProgramado, comMinuto, diasDaSemana, diasDoMes, esperarFimDoArraste, mover, paraHora, porDia, postProgramado, tituloPeriodo, VISOES, type Destino, type Visao } from "./logica";
 import { Mes } from "./Mes";
 import { Navegar } from "./Navegar";
-import { periodoDe } from "./postagens/logica";
+import { periodoDe, temPostagens } from "./postagens/logica";
 import { Postagens } from "./postagens/Postagens";
 import { modoSalvo, TrocaVisao, type ModoCalendario } from "./postagens/TrocaVisao";
 import { FiltroEmpresa } from "@/components/casca/FiltroEmpresa";
@@ -34,7 +34,9 @@ function Corpo({ agora }: { agora: string }) {
   const [modo, setModo] = useState<ModoCalendario>(modoSalvo);
   const semana = periodoDe("semana", agora.slice(0, 10));
   const { itens, ausente } = usePostagensCalendario(semana.de, semana.ate);
-  const tem = itens !== undefined && !ausente;
+  const [jaTeve, setJaTeve] = useState(false);
+  if (itens !== undefined && !jaTeve) setJaTeve(true);
+  const tem = temPostagens(jaTeve, itens, ausente); // L3
   const trocador = tem ? <TrocaVisao modo={modo} aoMudar={setModo} /> : null;
   return tem && modo === "postagens" ? <Postagens agora={agora} trocador={trocador} /> : <Calendario agora={agora} trocador={trocador} />;
 }
@@ -82,6 +84,7 @@ function Calendario({ agora, trocador }: { agora: string; trocador: ReactNode })
     })),
     soltar: (id, d) => {
       const t = tarefas.find((x) => x.id === id);
+      if (t && postProgramado(t)) return avisarFalha(avisoProgramado(t)); // A9: o post sairia no dia antigo
       if (t && podeAlterar(t, eu)) void salvarTarefa(mover(t, d));
     },
     irPara: (v, dia) => { setVisao(v); setCursor(dia); },

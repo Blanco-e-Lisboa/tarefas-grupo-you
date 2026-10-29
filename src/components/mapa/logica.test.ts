@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Tarefa } from "@/lib/dados";
-import { ETAPAS_ATE_POSTAR, PASSO, conteudos, diaDe, quandoDe, diasDoPeriodo, filaPorDia, foiPostado, semData, marcosDoMapa, inicioDaLinha, postadosFora, recuoMaximo, hoje, prazo, tituloDe, postadosNoMes, ultimoDia } from "./logica";
+import { ETAPAS_ATE_POSTAR, PASSO, conteudos, diaDe, quandoDe, diasDoPeriodo, filaPorDia, foiPostado, semData, marcosDoMapa, inicioDaLinha, postadosFora, recuoMaximo, hoje, prazo, tituloDe, postadosNoMes, ultimoDia, aCadaMinuto } from "./logica";
 
 const t = (id: string, tipo: Tarefa["tipo"], inicio?: string, extra: Partial<Tarefa> = {}): Tarefa => ({
   id, titulo: id, tipo, empresaId: "beec", etapa: "roteiro", responsavel: "natham", inicio, diaInteiro: false, cor: "etiqueta-1", links: [], arquivos: [], ...extra,
@@ -167,5 +167,19 @@ describe("semData (item 198)", () => {
     const a = t("a", "postagem", "2026-10-22T12:00", { etapa: "aprovado", postarEm: "2026-10-28T10:00" });
     const b = t("b", "postagem", undefined, { etapa: "aprovado", postarEm: "2026-10-26T10:00" });
     expect(conteudos([a, b]).map((x) => x.id)).toEqual(["b", "a"]);
+  });
+});
+
+describe("L6: o hoje do Mapa vira à meia-noite", () => {
+  it("o relógio avisa a cada minuto e para ao sair", () => {
+    vi.useFakeTimers();
+    const avisar = vi.fn();
+    const parar = aCadaMinuto(avisar);
+    vi.advanceTimersByTime(60_000);
+    expect(avisar).toHaveBeenCalledTimes(1);
+    parar();
+    vi.advanceTimersByTime(60_000);
+    expect(avisar).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 });

@@ -108,6 +108,11 @@ export function agendaPorDia(eventos: EventoAgenda[]) {
 export const vaiProGoogle = (t: Pick<Tarefa, "vaiProGoogle" | "responsavel">, temData: boolean, criador: Tarefa["criadoPor"] | null) =>
   !!t.vaiProGoogle && temData && !!criador && (t.responsavel === criador || criador === "natham");
 
+/** A9: card Aprovado com data do post = o alarme vai postar nessa data. Arrastar só mudaria o início (o post sairia no dia antigo), então as telas não deixam. */
+export const postProgramado = (t: Pick<Tarefa, "etapa" | "postarEm">) => t.etapa === "aprovado" && !!t.postarEm;
+export const avisoProgramado = (t: Pick<Tarefa, "postarEm">) =>
+  `Este card está programado para postar em ${diaCurto(t.postarEm!)} às ${horaCurta(t.postarEm!)}. Para mudar o dia ou o horário, mude a data do post na ficha.`;
+
 /** Nova versão da tarefa depois de arrastada. Mantém a duração quando dá. */
 export function mover(t: Tarefa, destino: Destino): NovaTarefa {
   if (!destino) return { ...t, inicio: undefined, fim: undefined, diaInteiro: false };

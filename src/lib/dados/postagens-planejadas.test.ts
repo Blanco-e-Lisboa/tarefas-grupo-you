@@ -90,3 +90,15 @@ describe("série inteira para a ficha (315-fecho)", () => {
     expect(await lerSerie("x")).toBeNull();
   });
 });
+
+describe("B11: leituras fora de ordem", () => {
+  it("a resposta da leitura mais velha, chegando por último, não pisa na mais nova", async () => {
+    let soltarVelha: (v: unknown) => void = () => {};
+    rpc.mockReturnValueOnce(new Promise((ok) => { soltarVelha = ok; })).mockResolvedValueOnce({ data: [{ ...linha, card_id: "novo" }], error: null });
+    const velha = carregar("2026-12-07", "2026-12-13");
+    await carregar("2026-12-07", "2026-12-13");
+    soltarVelha({ data: [{ ...linha, card_id: "velho" }], error: null });
+    await velha;
+    expect(lerPeriodo("2026-12-07", "2026-12-13")?.[0].cardId).toBe("novo");
+  });
+});

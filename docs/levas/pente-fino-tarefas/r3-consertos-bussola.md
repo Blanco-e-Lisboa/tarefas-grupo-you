@@ -1,0 +1,28 @@
+# Pente fino Tarefas, rodada 3: consertos de banco e servidor (Bussola)
+
+29/10/2026. Itens do `r2-codex.md` que ficaram comigo: N1, N2, A6, B3, N7 e a parte do banco do A7 (com o Lince), mais o achado 2 do `r3-ferreiro.md` (vídeo enfileirado antes de Aprovado). F2 continua esperando o Natham: não mexi.
+Nada aplicado no banco de produção (só leitura), nada publicado, nenhum commit.
+
+Provas: SQL na cópia local do banco (bate com a produção nas funções de postagem), colado 2 vezes e junto com 034 a 037 e o 040 do Lince; as provas antigas (`prova_034`, `prova_035`, `prova_037`) continuam passando com o 038 por cima. Funções: Vitest com Meta, Drive e banco falsos; cada teste novo também rodou numa cópia temporária com o conserto desligado e falhou lá.
+`npm run check` verde: lint 0 erros (19 avisos de arquivos de outros), tipos, regras, 61 arquivos e 493 testes, build.
+
+| Item | Situação | O que mudou | Arquivos | Teste |
+|---|---|---|---|---|
+| N1 | Consertado | Logo antes de publicar, a função confere que AQUELA rede ainda está escolhida no card. Se saiu, a rede é cancelada (nada pedido à Meta = a linha sai). | `supabase/functions/postar-meta/banco.ts` (`aindaVale` com `rede`), `estado.ts` | `postar.test.ts` "N1 (r3)" |
+| N2 | Consertado | O rascunho na Meta guarda uma impressão digital do conteúdo (legenda, formato, quadro da capa, mídias e capa, na ordem), gravada junto: `conteiner_id = "<rascunho>|<assinatura>"`. Na retomada, rascunho ainda não pedido e feito com outro conteúdo é descartado e refeito. Antes de publicar, a função também confere que o conteúdo do card ainda é o do rascunho (mudou durante a volta = cancela e a próxima volta refaz). Rascunho já pedido (`pub:`, `video-pub:`, `fotos:`) nunca se refaz (seria um segundo post). Linha antiga, sem assinatura, segue como antes. | `postar-meta/banco.ts` (`assinaturaDe`), `estado.ts` | `postar.test.ts` "N2 (r3)": publica "CORRIGIDA", não a legenda velha |
+| A6 | Consertado (fecha a janela com o 038) | A limpeza dos 7 dias trava o card no banco: `iniciar_limpeza_card` marca o card (só se ainda está em Postado, numa gravação só) e, enquanto ele está marcado, tirar de Postado é recusado (55006 "Os arquivos deste card estão sendo apagados do Drive agora. Tente de novo em alguns minutos."). No fim, `terminar_limpeza_card` solta; se a função cair, a trava vence sozinha em 10 minutos. Antes do 038 colado, a função segue a conferência arquivo a arquivo da rodada anterior. Escolha: é a menor saída que fecha de verdade, porque o Drive não tem trava; quem segura é o banco. O Lince traduz o 55006 na tela. | `supabase/038_limpeza_trava_videos_e_pauta.sql`, `supabase/functions/drive/acoes.ts` | `prova_038.sql` A6; `drive.test.ts` "A6 (r3)" (2 casos) |
+| A7 + achado 2 do Ferreiro | Consertado (banco e servidor; a tela é do Lince) | O card ganha a lista `videos_pendentes` (ids dos envios da fila). `marcar_video_pendente(p_tarefa, p_envio)` põe o id na lista em QUALQUER etapa (repetir é seguro); a marca "vídeo novo pendente" liga em Aprovado, e também quando o card ENTRA em Aprovado com a lista não vazia (achado 2). A confirmação do envio (`envio_id`) tira o id da lista ANTES de registrar o vídeo; o gatilho só tira a marca quando a lista fica vazia. Com dois vídeos do mesmo card, a postagem não acorda entre o primeiro e o segundo. "Postar com o vídeo atual" limpa a lista. Sem `p_envio` (tela antiga), tudo como antes. | `038`, `drive/acoes.ts` | `prova_038.sql` A7, "A7 ao aprovar", "A7 liberar"; `drive.test.ts` "A7 (r3)" |
+| B3 | Consertado | Bytes que não são foto nem vídeo só entram como documento. Se o arquivo foi declarado como foto ou vídeo (pela tela ou pelo tipo guardado no Drive), é recusado (422 "Não reconheci este arquivo como foto ou vídeo. Use JPG, PNG, GIF, WebP, HEIC, MP4, MOV, WebM ou AVI.") e vai para a lixeira. Foto ou vídeo reconhecido pelos bytes continua corrigindo o tipo declarado (F10). | `drive/acoes.ts`, `drive/comum.ts` (`tipoReal`) | `drive.test.ts` "B3 (r3)": PDF com nome .jpg recusado como capa e como foto; PDF de verdade continua entrando |
+| N7 | Consertado | Pauta, "Só este dia": título mandado vazio fica vazio nesse dia (guarda '' em vez de nulo, que queria dizer "usar o título da série"). | `038` (`salvar_planejada`, igual ao de produção com só essa mudança) | `prova_038.sql` N7 |
+
+## Observações
+
+- **Testes antigos da `drive` precisaram de bytes de verdade.** Eles subiam bytes zerados dizendo ser vídeo ou foto; com o B3 isso é recusado, como deve. Entraram dois ajudantes no Google falso (`videoFalso(n)` com a assinatura de um WebM, `fotoFalsa(n)` com a de um JPEG), usados nos testes de vídeo e foto. Nenhuma regra dos testes antigos mudou.
+- **Lista de vídeos pendentes com envio que morreu.** Se um envio é interrompido (aba fechada) e nunca chega, o id dele fica na lista; quando o card for aprovado, a marca liga e a postagem espera até alguém usar "Postar com o vídeo atual". É o mesmo comportamento de hoje para card já em Aprovado, agora também para o envio que começou antes.
+- **Formatos que o B3 não reconhece** (BMP, TIFF, SVG, entre outros) declarados como foto passam a ser recusados. O Instagram só aceita JPG e PNG, então nada que posta deixa de entrar.
+- Um teste antigo da `drive` (link do vídeo, que depende do relógio) falhou uma vez numa rodada com a máquina ocupada e passou nas 3 rodadas seguintes. Não é deste conserto.
+- O `acoes.ts` da `drive` voltou para baixo de 350 linhas: a conferência do tipo foi para `comum.ts`.
+
+## Para aplicar (Natham decide)
+
+SQL na ordem: `034`, `035`, `036`, `037`, `038` (e o `040` do Lince, que convive). Depois publicar `postar-meta` e `drive`. A tela do Lince manda `p_envio` e `envio_id` e se vira sem o 038 (tenta de novo sem o campo).

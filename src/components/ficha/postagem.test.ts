@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Arquivo } from "@/lib/dados";
-import { estadoDoCard, faltaParaPostar, redesValidas, situacao, textosPublicacao, comoHoraMarcada, CANCELADA, MODO_TESTE } from "./postagem";
+import { estadoDoCard, faltaParaPostar, redesValidas, situacao, textosPublicacao, comoHoraMarcada, CANCELADA, MODO_TESTE, SO_YOU_CARD, hojeEmBrasilia, jaPassou, jaPostadoEm } from "./postagem";
 
 const img: Arquivo = { nome: "a.png", tipo: "imagem" }, vid: Arquivo = { nome: "b.mp4", tipo: "video" }, capa: Arquivo = { nome: "c.jpg", tipo: "imagem", papel: "capa" };
 const card = (arquivos: Arquivo[], legenda = "Texto") => ({ arquivos, legenda, empresaId: "you" });
@@ -55,7 +55,7 @@ describe("linha única do card Aprovado (botões na ficha)", () => {
     expect(estadoDoCard({ ...you, postagens: [{ rede: "instagram", status: "enviando" }] })).toEqual({ texto: "Postando…", tom: "postando" });
     expect(estadoDoCard({ ...you, postagens: [{ rede: "facebook", status: "erro", erro: "x" }] })).toEqual({ texto: "Erro ao postar: abra o card", tom: "erro" });
     expect(estadoDoCard(you).texto).toBe("Sem programação");
-    expect(estadoDoCard({ ...you, empresaId: "beec", postarEm: "2026-10-27T12:00" }).texto).toBe("Postagem automática só para a You (por enquanto)");
+    expect(estadoDoCard({ ...you, empresaId: "beec", postarEm: "2026-10-27T12:00" }).texto).toBe(SO_YOU_CARD); // M1: só a You programa
   });
   it("só Facebook + vídeo sem data: 'cancelada' só se havia programação; nunca programado = só a checagem (achado a da Lupa)", () => {
     const soFb = { empresaId: "you", formato: "carrossel" as const, arquivos: [img, vid], postarRedes: ["facebook" as const] };
@@ -88,7 +88,16 @@ describe("comoHoraMarcada (238)", () => {
     expect(comoHoraMarcada(CANCELADA, false)).toBe("Hora marcada cancelada: carrossel com vídeo não vai para o Facebook. Acenda o Instagram ou tire o vídeo e marque a hora de novo.");
     expect(comoHoraMarcada("Programado · 26/10 08:00 · Instagram", true)).toBe("Programado · 26/10 08:00 · Instagram");
     expect(comoHoraMarcada("Erro ao postar: abra o card", false)).toBe("Erro ao postar: abra o card");
-    expect(comoHoraMarcada("Postagem automática só para a You (por enquanto)", false)).toBe("Postagem automática ainda desligada");
+    expect(comoHoraMarcada(SO_YOU_CARD, false)).toBe(SO_YOU_CARD); // M1: o aviso de outra empresa não depende do interruptor
+  });
+});
+
+describe("M18: horário que já passou é o de Brasília", () => {
+  const agora = new Date("2026-10-29T15:00:00Z"); // 12:00 em Brasília (13:00 num computador em UTC+1, 15:00 em UTC)
+  it("compara com a hora de Brasília, não com o relógio do computador", () => {
+    expect(jaPassou("2026-10-29T13:00", agora)).toBe(false);
+    expect(jaPassou("2026-10-29T11:59", agora)).toBe(true);
+    expect(hojeEmBrasilia(new Date("2026-10-30T02:00:00Z"))).toBe("2026-10-29"); // 23:00 do dia 29 em Brasília
   });
 });
 
@@ -105,4 +114,20 @@ describe("modo de teste (239)", () => {
     expect(t.confirmar("Instagram", "Reels")).toEqual({ titulo: "Postar agora no Instagram da You?", texto: '"Reels" vai para o ar agora. Não dá para desfazer.', acao: "Postar" });
     expect(textosPublicacao(false, false, true).aviso).toMatch(/^Postagem automática ainda desligada/);
   });
+});
+
+describe("r2 B1 (037): situação da fila com data futura", () => {
+  it("tentar de novo com data futura mostra Programado, não Postando", () => {
+    const t = { postarEm: "2026-10-30T18:00", postarRedes: ["instagram" as const], postagens: [{ rede: "instagram" as const, status: "fila" as const }] };
+    expect(situacao(t, new Date("2026-10-29T15:00:00Z"))?.tipo).toBe("programado");
+    expect(situacao(t, new Date("2026-10-30T22:00:00Z"))?.tipo).toBe("postando"); // passou da hora: está saindo
+  });
+});
+
+it("r4 F2 (b): já postado só quando TODA rede escolhida tem post publicado", () => {
+  const postagens = [{ rede: "instagram" as const, status: "postado" as const }, { rede: "facebook" as const, status: "erro" as const }];
+  expect(jaPostadoEm({ postagens }, ["instagram"])).toBe(true);
+  expect(jaPostadoEm({ postagens }, ["instagram", "facebook"])).toBe(false); // o Facebook deu erro: continua programável
+  expect(jaPostadoEm({ postagens: [] }, ["instagram"])).toBe(false);
+  expect(jaPostadoEm({ postagens }, [])).toBe(false);
 });

@@ -96,6 +96,7 @@ describe("quem pode mexer na tarefa (espelha o banco)", () => {
 describe("recusa do banco em português", () => {
   it("42501 = quem aprova; 23514 de Postagem = use Concluir; o resto fica no texto padrão", () => {
     expect(motivoDoBanco({ code: "42501" }, "x")).toMatch(/quem aprova/);
+    expect(motivoDoBanco({ code: "55000", message: "Este card já foi postado. Para postar de novo, duplique o card." }, "x")).toBe("Este card já foi postado. Para postar de novo, duplique o card."); // r4 F2 (b)
     expect(motivoDoBanco({ code: "23514", message: "so card do tipo Postagem vai para Aprovado" }, "x")).toMatch(/Concluir/);
     expect([motivoDoBanco({ code: "23514", message: "tarefas_legenda_ok" }, "x"), motivoDoBanco(null, "x")]).toEqual(["x", "x"]);
   });

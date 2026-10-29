@@ -4,10 +4,10 @@ import { assinar, conferir, iguais } from "../_shared/google.ts";
 import { chaves, FORMATOS, formatoValido } from "../_shared/pastas.ts";
 import type { DriveApi } from "./drive-api.ts";
 import { ErroDrive } from "./drive-api.ts";
-import { MAX_BYTES, nomeOk, Recusa, texto, TIPOS } from "./comum.ts";
+import { limitarRange, MAX_BYTES, NAO_RECONHECI, nomeOk, Recusa, SO_TEMA, texto, tipoReal, TIPOS } from "./comum.ts";
 import { criarPastaLivre } from "./pasta-livre.ts";
 import { COLUNAS_CARD, criarPastas, type Card, type Tema } from "./pastas-drive.ts";
-import { criarRest, ErroRest, type Rest } from "./rest.ts";
+import { criarRest, ErroRest, semFuncao, type Rest } from "./rest.ts";
 
 type Busca = typeof fetch;
 export type Deps = {
@@ -27,16 +27,7 @@ const CORS = {
 const json = (status: number, corpo: unknown) => new Response(JSON.stringify(corpo), { status, headers: { ...CORS, "content-type": "application/json" } });
 const FORMATOS_E_SEM = [...FORMATOS, null];
 
-// 289 · Range aberto ("bytes=N-", o que o <video> sempre pede) fazia o Drive despejar o vídeo INTEIRO por aqui a cada pulo da
-// barrinha da capa: 130 GB de Egress num dia. Teto de 4 MB por pedido; o navegador recebe 206 e pede o pedaço seguinte se precisar.
-export const PEDACO_VIDEO = 4 * 1024 * 1024;
-export function limitarRange(range: string | null): string {
-  const m = /^bytes=(\d+)-(\d*)$/.exec(range ?? "bytes=0-");
-  if (!m) return range!;
-  const ini = Number(m[1]), teto = ini + PEDACO_VIDEO - 1;
-  return `bytes=${ini}-${m[2] ? Math.min(Number(m[2]), teto) : teto}`;
-}
-
+export { limitarRange, PEDACO_VIDEO } from "./comum.ts";
 export function criarManipulador(d: Deps) {
   const agora = d.agora ?? Date.now;
   const url = () => d.env("SUPABASE_URL")!;
@@ -60,22 +51,8 @@ export function criarManipulador(d: Deps) {
   }
   const exigir = (ok: unknown, status: number, msg: string) => { if (ok !== true) throw new Recusa(status, msg); };
 
-  const { pastaEmpresa, renomearConteudos, temaDe, novoTema, pastaDeTema, cardDe, pastaDoConteudo, rearmarLimpeza, tirarPastaDoConteudo } = criarPastas(d, servico);
+  const { pastaEmpresa, renomearConteudos, temaDe, novoTema, pastaDeTema, cardDe, pastaDoConteudo, rearmarLimpeza, tirarPastaDoConteudo, esvaziar } = criarPastas(d, servico);
   const livres = criarPastaLivre(d, servico, pastaEmpresa);
-
-  // ---- apagar arquivos de um card (Drive + Supabase + linhas) ----
-  /** Apaga os arquivos do card. `soDrive` (a limpeza dos 7 dias): só o que está no DRIVE; anexo antigo do Supabase (sem drive_id) NUNCA é tocado, fica só na ficha.
-      Apagar o card de propósito (soDrive falso) leva também os anexos do Supabase. */
-  async function esvaziar(tarefaId: string, soDrive = false) {
-    const s = servico();
-    const linhas = await s.ler<{ id: string; drive_id: string | null; caminho: string | null }>("arquivos", { tarefa_id: tarefaId }, "id,drive_id,caminho");
-    // cada linha sai logo depois do seu arquivo: se algo falhar no meio, o que sobra no banco é exatamente o que ainda está no Drive (e dá para tentar de novo)
-    for (const l of linhas) if (l.drive_id) { await d.api.lixeira(l.drive_id); await s.apagar("arquivos", { id: l.id }); }
-    const sup = soDrive ? [] : linhas.flatMap((l) => (l.caminho ? [l.caminho] : []));
-    await s.removerObjetos("arquivos", sup);
-    if (sup.length) await s.apagar("arquivos", { tarefa_id: tarefaId });
-    await tirarPastaDoConteudo(tarefaId);
-  }
 
   /** Valida o destino de um documento solto: pessoa com login (o banco decide), empresa visível, formato válido, tema da mesma empresa. */
   async function pedidoDePasta(c: Record<string, unknown>, eu: Rest) {
@@ -110,11 +87,12 @@ export function criarManipulador(d: Deps) {
         const driveId = texto(c.drive_id), nome = nomeOk(c.nome, 200), tipo = texto(c.tipo), papel = texto(c.papel) ?? "anexo", tamanho = Number(c.tamanho), ordem = Number(c.ordem ?? 0);
         if (!tarefaId || !driveId || !nome || !tipo || !TIPOS.includes(tipo) || !(tamanho > 0) || !["anexo", "capa"].includes(papel) || !Number.isInteger(ordem)) throw new Recusa(400, "Confirmação inválida.");
         await podeMexer(tarefaId);
-        const s = servico();
+        const s = servico(), envio = c.envio_id ? String(c.envio_id) : undefined;
+        const jaChegou = async (id: string) => { if (envio) await s.rpc("video_chegou", { p_tarefa: tarefaId, p_envio: envio }).catch(semFuncao); return { arquivo_id: id }; }; // novo 3 (r4, 039): já registrado (repetição ou retomada), o envio sai da lista igual
         const [ja] = await s.ler<{ id: string; tarefa_id: string }>("arquivos", { drive_id: driveId }, "id,tarefa_id");
         if (ja) {
           if (ja.tarefa_id !== tarefaId) throw new Recusa(409, "Este arquivo já pertence a outro card.");
-          return { arquivo_id: ja.id }; // repetição do mesmo pedido
+          return await jaChegou(ja.id); // repetição do mesmo pedido
         }
         const card = await cardDe(tarefaId);
         const f = await d.api.ver(driveId).catch((e: unknown) => {
@@ -128,19 +106,39 @@ export function criarManipulador(d: Deps) {
           await d.api.lixeira(driveId).catch(() => {}); // é um envio nosso que ficou pela metade: não serve, vai para a lixeira em vez de ficar solto
           throw new Recusa(422, "O arquivo não chegou inteiro ao Drive. Tente de novo.");
         }
+        const real = tipoReal(new Uint8Array(await (await d.baixar(driveId, "bytes=0-15")).arrayBuffer()), tipo, f.mimeType ?? ""); // B3 e F10 (ver comum.ts)
+        if (!real || (papel === "capa" && real !== "imagem")) {
+          await d.api.lixeira(driveId).catch(() => {});
+          throw new Recusa(422, real ? "A capa precisa ser uma imagem." : NAO_RECONHECI);
+        }
+        // M14 (pente fino r1): troca de capa. A velha só sai depois de a nova passar em todas as conferências, e a pasta do conteúdo nunca sai junto.
+        const [velho] = c.substitui_arquivo_id ? await s.ler<{ id: string; tarefa_id: string; papel: string; drive_id: string | null; caminho: string | null }>(
+          "arquivos", { id: String(c.substitui_arquivo_id) }, "id,tarefa_id,papel,drive_id,caminho") : [];
+        if (velho && (velho.tarefa_id !== tarefaId || velho.papel !== papel)) throw new Recusa(409, "O anexo a trocar não é deste card.");
         // A ocasião do card pode ter mudado durante o envio: o arquivo é bom, então SEGUE para a pasta atual do card (não se descarta nem se deixa na antiga sem registro)
         const pasta = (await pastaDoConteudo(card)).id; // só depois das recusas: pedido recusado não cria ocasião nem pasta
         if (!f.parents?.includes(pasta)) await d.api.mover(driveId, pasta, f.parents ?? []);
+        if (velho) {
+          // F4 (pente fino r2): numa gravação só, a linha da capa passa a apontar para o arquivo novo; se falhar, nada mudou e a capa velha segue.
+          // Só depois o arquivo velho sai (se a lixeira falhar, ele fica solto no Drive, mas o card já está com a capa nova).
+          await s.atualizar("arquivos", { id: velho.id }, { drive_id: driveId, caminho: null, nome, tipo: real, tamanho, ordem, criado_por: pessoa.id });
+          if (velho.drive_id) await d.api.lixeira(velho.drive_id).catch(() => console.error(JSON.stringify({ funcao: "drive", acao: "capa-velha-na-lixeira", erro: "falhou" })));
+          if (velho.caminho) await s.removerObjetos("arquivos", [velho.caminho]).catch(() => console.error(JSON.stringify({ funcao: "drive", acao: "capa-velha-storage", erro: "falhou" })));
+          return { arquivo_id: velho.id };
+        }
+        const linha = { tarefa_id: tarefaId, drive_id: driveId, nome, tipo: real, tamanho, papel, ordem, criado_por: pessoa.id };
         try {
-          const [l] = await s.inserir<{ id: string }>("arquivos", { tarefa_id: tarefaId, drive_id: driveId, nome, tipo, tamanho, papel, ordem, criado_por: pessoa.id });
-          return { arquivo_id: l.id };
+          const id = envio && (await s.rpc<string>("registrar_video", { p_tarefa: tarefaId, p_envio: envio, p_linha: linha }).catch(semFuncao)); // A7 (r4, 039): registra e sai da lista juntos; sem o 039, caminho do 038
+          if (id) return { arquivo_id: id };
+          if (envio) await s.rpc("video_chegando", { p_tarefa: tarefaId, p_envio: envio }).catch(semFuncao);
+          return { arquivo_id: (await s.inserir<{ id: string }>("arquivos", linha))[0].id };
         } catch (e) {
           // Perdeu a corrida contra a mesma confirmação? Então a linha existe: é o MESMO arquivo, não se apaga nada.
           // Se esta consulta falhar, o erro sobe: NUNCA se apaga um arquivo que pode estar registrado.
           const [agora] = await s.ler<{ id: string; tarefa_id: string }>("arquivos", { drive_id: driveId }, "id,tarefa_id");
           if (agora) {
             if (agora.tarefa_id !== tarefaId) throw new Recusa(409, "Este arquivo já pertence a outro card.");
-            return { arquivo_id: agora.id };
+            return await jaChegou(agora.id);
           }
           await d.api.lixeira(driveId).catch(() => {}); // sem linha para esse arquivo ele ficaria solto no Drive
           if (e instanceof ErroRest && e.status === 409) throw new Recusa(409, "Este card já tem capa. Tire a atual antes.");
@@ -150,6 +148,7 @@ export function criarManipulador(d: Deps) {
       case "criar_ocasiao": {
         const empresa = texto(c.empresa_id), nome = nomeOk(c.nome);
         if (!empresa || !nome) throw new Recusa(400, "Escreva o nome do tema.");
+        exigir(await eu.rpc("pode_mexer_pastas"), 403, SO_TEMA); // B2 (decisão do Natham, 29/10)
         const visivel = await eu.ler("empresas", { id: empresa }, "id");
         if (!visivel.length) throw new Recusa(403, "Empresa não encontrada.");
         // Já Permanente na criação = LIGAR: mesma regra de quem liga (Natham e Matheus; o banco responde). Adrian ou Lucas com login não ligam.
@@ -160,6 +159,7 @@ export function criarManipulador(d: Deps) {
       case "renomear_ocasiao": {
         const id = texto(c.ocasiao_id), nome = nomeOk(c.nome);
         if (!id || !nome) throw new Recusa(400, "Escreva o nome do tema.");
+        exigir(await eu.rpc("pode_mexer_pastas"), 403, SO_TEMA); // B2
         if (!(await eu.ler("ocasioes", { id }, "id")).length) throw new Recusa(404, "Tema não encontrado."); // a trava de leitura do banco decide se a pessoa a enxerga
         const s = servico();
         const [o] = await s.ler<Tema>("ocasioes", { id });
@@ -325,11 +325,15 @@ export function criarManipulador(d: Deps) {
           await rearmarLimpeza(id, true);
           return json(200, { ok: true, permanente: true });
         }
-        try { await esvaziar(id, true); } catch (e) {
+        // A6 (r3/r4): trava o card em Postado enquanto limpa. 039: crachá (nulo = outra limpeza rodando ou fora de Postado), solta só com ele; 038: sim/não; sem os dois: arquivo a arquivo.
+        const trava = await servico().rpc<boolean | string | null>("iniciar_limpeza_card", { p_tarefa: id }).catch(semFuncao);
+        if (trava === false || trava === null) throw new Recusa(409, "O card não está em Postado ou já está sendo limpo.");
+        let limpou: boolean;
+        try { limpou = await esvaziar(id, true); } catch (e) {
           await servico().rpc("armar_alarme_servico", { p_tipo: "limpar", p_tarefa: id, p_minutos: 60 }); // tenta de novo daqui a 1 h
           throw e;
-        }
-        return json(200, { ok: true });
+        } finally { if (trava) await servico().rpc("terminar_limpeza_card", { p_tarefa: id, ...(typeof trava === "string" ? { p_desde: trava } : {}) }).catch(() => {}); } // falhou: vence em 10 min
+        return json(200, { ok: true, ...(limpou ? {} : { parou: true }) }); // parou: o gatilho do banco já desarmou ao sair de Postado
       }
       const token = /^Bearer (.+)$/.exec(req.headers.get("authorization") ?? "")?.[1];
       if (!token) throw new Recusa(401, "Entre no sistema.");

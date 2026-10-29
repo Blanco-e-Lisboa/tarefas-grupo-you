@@ -4,7 +4,7 @@ import { IconeRede } from "@/components/ui/Marca";
 import { NOMES } from "@/components/ficha/Ficha";
 import { Pessoa } from "@/components/ui/Pessoa";
 import { Selecao } from "@/components/ui/Selecao";
-import { nomeAgenda } from "./Compromisso";
+import { nomeAgenda, pessoaDaAgenda } from "./Compromisso";
 
 // Filtros SÓ do calendário (pessoa, rede, etapa, tipo, agendas). Somam com o filtro global de empresa, que a casca desenha.
 // Grupo vazio = sem filtro naquele grupo. Pessoa, Rede, Etapa e Tipo valem para as tarefas; Agendas, para os compromissos do Google (item 190).
@@ -46,7 +46,7 @@ export function BarraFiltros({ filtros, mudar }: { filtros: Filtros; mudar: (f: 
           rotulo="Agendas"
           valor={filtros.agenda}
           aoMudar={(v) => mudar({ ...filtros, agenda: v })}
-          opcoes={agendas.map((f) => ({ valor: f, rotulo: nomeAgenda(f), antes: f === "contato" ? undefined : <Pessoa quem={f} tamanho={18} /> }))}
+          opcoes={agendas.map((f) => ({ valor: f, rotulo: nomeAgenda(f), antes: pessoaDaAgenda(f) ? <Pessoa quem={pessoaDaAgenda(f)!} tamanho={18} /> : undefined }))}
         />
       )}
       {ativos > 0 && (

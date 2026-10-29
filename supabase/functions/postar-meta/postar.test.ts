@@ -307,3 +307,143 @@ describe("239: a tela pergunta se a postar-meta está em MODO DE TESTE", () => {
     expect(sem.status).toBe(401);
   });
 });
+
+describe("postar-meta: pente fino r1", () => {
+  it("A5: card que perdeu a data (ou saiu de Aprovado) não é publicado; a linha sai e ninguém é avisado", async () => {
+    const m = mundo();
+    m.card({ formato: "post", postar_em: null }, [{ tipo: "imagem", bytes: JPG }]);
+    await m.trabalhar(TAREFA);
+    expect(pubs(m)).toHaveLength(0);
+    expect(m.b.estado.tabelas.postagens).toHaveLength(0);
+    expect(m.avisos).toHaveLength(0);
+    expect(m.etapa()).toBe("aprovado");
+  });
+
+  it("M19: publicou, a resposta se perdeu e há OUTRO post com a mesma legenda: grava postado sem link (nunca o link do outro)", async () => {
+    const m = mundo();
+    m.card({ formato: "post", legenda: "TIMEOUT-PUBLISH", postar_redes: ["instagram"] }, [{ tipo: "imagem", bytes: JPG }]);
+    const lista = m.meta.estado.publicacoes as { id: string; rede: string; legenda: string }[];
+    const empurrar = lista.push.bind(lista);
+    lista.push = (...x) => { const n = empurrar(...x); empurrar({ id: "outro", rede: "instagram", legenda: "TIMEOUT-PUBLISH" }); return n; };
+    await m.trabalhar(TAREFA);
+    expect(m.linha("instagram")).toMatchObject({ status: "postado", link: null });
+  });
+
+  it("M20: vídeo acima de 25 Mbps é barrado antes de ir para a Meta, com o motivo na faixa", async () => {
+    const m = mundo();
+    m.card({ formato: "reels", postar_redes: ["instagram"] }, [{ tipo: "video", bytes: video(), duracaoMs: 80 }]); // 300 kB em 0,08 s = 30 Mbps
+    await m.trabalhar(TAREFA);
+    expect(pubs(m)).toHaveLength(0);
+    expect(m.corposRupload).toHaveLength(0);
+    expect(m.linha("instagram")).toMatchObject({ status: "erro", erro: expect.stringContaining("30,0 Mbps e a Meta aceita até 25") });
+  });
+
+  it("M20: vídeo dentro da regra (ou sem duração medida pelo Drive) segue normal", async () => {
+    const m = mundo();
+    m.card({ formato: "reels", postar_redes: ["instagram"] }, [{ tipo: "video", bytes: video(), duracaoMs: 1000 }]); // 2,4 Mbps
+    await m.trabalhar(TAREFA);
+    expect(m.linha("instagram")?.status).not.toBe("erro");
+  });
+
+  it("bug 1 (pós-Codex): vídeo do Facebook já PEDIDO para publicar e o card sai de Aprovado: a linha fica (estado incerto), nunca some", async () => {
+    const m = mundo();
+    m.card({ formato: "reels", postar_redes: ["facebook"] }, [{ tipo: "video", bytes: video() }]);
+    const real = m.meta.fetch;
+    m.meta.fetch = (async (e: RequestInfo | URL, i?: RequestInit) => {
+      if (String(i?.body ?? "").includes("upload_phase=finish")) { // a Meta recebeu o pedido mas ainda não publicou; alguém tira a programação
+        m.b.estado.tabelas.tarefas[0].postar_em = null;
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      return real(e, i);
+    }) as typeof fetch;
+    await m.trabalhar(TAREFA);
+    expect(m.linha("facebook")).toMatchObject({ status: "erro", erro: expect.stringMatching(/estado incerto/i), conteiner_id: expect.stringMatching(/^video-pub:/) });
+  });
+
+  it("bug 5 (pós-Codex): vídeo novo pendente cancela sem desarmar a programação (o banco rearma)", async () => {
+    const m = mundo();
+    m.card({ formato: "post", video_pendente_desde: "2026-10-25T20:59:00Z" }, [{ tipo: "imagem", bytes: JPG }]);
+    await m.trabalhar(TAREFA);
+    expect(pubs(m)).toHaveLength(0);
+    expect(m.alarmes).not.toContain("desarmar");
+  });
+
+  it("M19 (pós-Codex): a única legenda igual na lista é de OUTRO post (a nossa mudou): mesmo assim, sem link", async () => {
+    const m = mundo();
+    m.card({ formato: "post", legenda: "TIMEOUT-PUBLISH", postar_redes: ["instagram"] }, [{ tipo: "imagem", bytes: JPG }]);
+    const lista = m.meta.estado.publicacoes as { id: string; rede: string; legenda: string }[];
+    const empurrar = lista.push.bind(lista);
+    lista.push = (...x) => { const n = empurrar(...x); x[0].legenda = "legenda editada no app"; empurrar({ id: "outro", rede: "instagram", legenda: "TIMEOUT-PUBLISH" }); return n; };
+    await m.trabalhar(TAREFA);
+    expect(m.linha("instagram")).toMatchObject({ status: "postado", link: null });
+  });
+
+  it("F3 (pente fino r2): sem a duração do Drive (vídeo grande ainda processando), o vídeo segue como antes e a Meta decide", async () => {
+    const m = mundo();
+    m.card({ formato: "reels", postar_redes: ["instagram"] }, [{ tipo: "video", bytes: video(), duracaoMs: 0 }]);
+    await m.trabalhar(TAREFA);
+    expect(m.corposRupload.length + m.meta.estado.conteineres.size).toBeGreaterThan(0); // foi para a Meta
+    expect(m.linha("instagram")?.erro ?? "").not.toContain("Mbps");
+    expect(m.linha("instagram")?.status).not.toBe("erro");
+  });
+
+  it("N1 (r3): o Facebook é tirado do card enquanto a função trabalha: o post NÃO sai no Facebook", async () => {
+    const m = mundo();
+    m.card({ formato: "post" }, [{ tipo: "imagem", bytes: JPG }]);
+    const real = m.meta.fetch;
+    m.meta.fetch = (async (e: RequestInfo | URL, i?: RequestInit) => {
+      if (new Request(e).url.includes("/photos")) m.b.estado.tabelas.tarefas[0].postar_redes = ["instagram"]; // alguém desliga o Facebook no meio
+      return real(e, i);
+    }) as typeof fetch;
+    await m.trabalhar(TAREFA);
+    expect(pubs(m, "facebook")).toHaveLength(0);
+    expect(pubs(m, "instagram")).toHaveLength(1);
+  });
+
+  it("N2 (r3): o Reels fica processando, a legenda é corrigida no card: a retomada refaz o rascunho e publica a legenda NOVA", async () => {
+    const m = mundo({ conferencias: 25 });
+    m.card({ formato: "reels", postar_redes: ["instagram"] }, [{ tipo: "video", bytes: video() }]);
+    await m.trabalhar(TAREFA);
+    expect(m.linha("instagram")?.status).toBe("processando");
+    m.b.estado.tabelas.tarefas[0].legenda = "CORRIGIDA";
+    m.meta.estado.conferenciasAteFinished = 1;
+    await m.trabalhar(TAREFA);
+    await m.trabalhar(TAREFA);
+    const ig = pubs(m, "instagram") as { legenda: string }[];
+    expect(ig).toHaveLength(1);
+    expect(ig[0].legenda).toBe("CORRIGIDA");
+  });
+
+  it("N2 (r4): rascunho de antes do conserto (sem assinatura) nunca é reaproveitado: descarta e publica a legenda NOVA", async () => {
+    const m = mundo({ conferencias: 25 });
+    m.card({ formato: "reels", postar_redes: ["instagram"] }, [{ tipo: "video", bytes: video() }]);
+    await m.trabalhar(TAREFA);
+    const l = m.b.estado.tabelas.postagens.find((p) => p.rede === "instagram")!;
+    l.conteiner_id = String(l.conteiner_id).split("|")[0]; // linha gravada pela versão antiga da função
+    m.b.estado.tabelas.tarefas[0].legenda = "CORRIGIDA";
+    m.meta.estado.conferenciasAteFinished = 1;
+    await m.trabalhar(TAREFA);
+    await m.trabalhar(TAREFA);
+    const ig = pubs(m, "instagram") as { legenda: string }[];
+    expect(ig).toHaveLength(1);
+    expect(ig[0].legenda).toBe("CORRIGIDA");
+  });
+
+  it("novo 1 (r4): o Facebook é acrescentado durante a publicação: o card NÃO vai para Postado e a função se arma para postar o Facebook", async () => {
+    const m = mundo();
+    m.card({ formato: "post", postar_redes: ["instagram"] }, [{ tipo: "imagem", bytes: JPG }]);
+    const real = m.meta.fetch;
+    m.meta.fetch = (async (e: RequestInfo | URL, i?: RequestInit) => {
+      if (new Request(e).url.includes("media_publish")) m.b.estado.tabelas.tarefas[0].postar_redes = ["instagram", "facebook"];
+      return real(e, i);
+    }) as typeof fetch;
+    await m.trabalhar(TAREFA);
+    expect(pubs(m, "instagram")).toHaveLength(1);
+    expect(m.b.estado.tabelas.tarefas[0].etapa).toBe("aprovado");
+    expect(m.alarmes.at(-1)).toBe("armar 1");
+    await m.trabalhar(TAREFA);
+    expect(pubs(m, "facebook")).toHaveLength(1);
+    expect(pubs(m, "instagram")).toHaveLength(1);
+    expect(m.b.estado.tabelas.tarefas[0].etapa).toBe("postado");
+  });
+});

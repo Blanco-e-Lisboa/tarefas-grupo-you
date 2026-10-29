@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Ocorrencia, Planejada } from "@/lib/dados";
-import { comODia, diasRepetidos, estadoDoGrupo, faltaPreencher, HORAS, janelaDaPlanejada, naHoraDoCard, paraGravar, periodoDe, planejadaNova, porDiaPostagens, soHoraQuemTitulo } from "./logica";
+import { comODia, diasRepetidos, estadoDoGrupo, faltaPreencher, HORAS, janelaDaPlanejada, naHoraDoCard, paraGravar, periodoDe, planejadaNova, porDiaPostagens, soHoraQuemTitulo, temPostagens } from "./logica";
 
 const o = (dia: string, hora: string, empresaId: string): Ocorrencia => ({ dia, hora, empresaId, estado: "planejada" });
 
@@ -95,5 +95,14 @@ describe("Lince 27/10: planejada repetida e hora do card", () => {
     expect(naHoraDoCard(antiga, () => "18:30").hora).toBe("18:30");
     expect(naHoraDoCard(antiga, () => "").hora).toBe("19:00");
     expect(naHoraDoCard({ ...antiga, estado: "planejada" }, () => "18:30").hora).toBe("19:00");
+  });
+});
+
+describe("L3: o botão Tarefas | Postagens não some na virada da semana", () => {
+  it("depois de ver o calendário de postagens uma vez, a semana nova carregando não esconde a tela", () => {
+    expect(temPostagens(false, undefined, false)).toBe(false); // ainda não carregou nada
+    expect(temPostagens(false, [], false)).toBe(true);
+    expect(temPostagens(true, undefined, false)).toBe(true); // virou a semana: carregando a nova
+    expect(temPostagens(true, undefined, true)).toBe(false); // função ausente no banco: esconde
   });
 });

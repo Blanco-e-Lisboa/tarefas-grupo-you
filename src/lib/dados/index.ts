@@ -8,6 +8,8 @@ export { salvarTarefa, removerTarefa, salvarEmpresa, salvarTag, editarTag, exclu
 export { postando } from "./postagens";
 export { podeMarcar } from "./repositorio-regras";
 export { marcarFeita } from "./marcar-feita";
+/** Aviso na faixa de erro da casca (A9: "card programado, mude a data do post na ficha"). */
+export { falhou as avisarFalha } from "./repositorio";
 
 // Na hidratação vale o que o servidor desenhou: nada carregado. Se o 3º argumento lesse os dados vivos, a tela que hidrata depois
 // de os dados chegarem (código atrasado, servidor recém-ligado) montava com eles e dava o erro React #418 (item 177, achado 4 do pedido).

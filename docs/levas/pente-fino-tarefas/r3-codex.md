@@ -1,0 +1,55 @@
+**Persistem 5 falhas na conferência e identifiquei 5 bugs novos.** Nos SQL disponíveis, não encontrei sobrescrita por versão antiga nem criação de gatilho duplicado.
+
+Corte: **29/10/2026, 12h14, Brasília**. Nenhum arquivo editado e nenhum SQL aplicado. Os vereditos abaixo avaliam o código local com os SQL correspondentes. Não comprovam funcionamento em produção: esta sessão não dispõe de conexão com o banco vivo.
+
+**Parte 1: conferência das correções**
+
+| Item | Veredito | Evidência e conclusão |
+|---|---|---|
+| **A1** | **ok, depende de 040 e 041** | [versao-card.ts:29](src/lib/dados/versao-card.ts:29) e [041:18](supabase/041_postar_agora_devolve_versao.sql:18). “Postar agora” devolve as versões de antes e depois com o registro protegido durante a operação. A tela só reconhece como própria a mudança que partiu da versão esperada. |
+| **A6** | **Ainda falha com limpezas sobrepostas** | [038:24](supabase/038_limpeza_trava_videos_e_pauta.sql:24), [038:32](supabase/038_limpeza_trava_videos_e_pauta.sql:32). Duas execuções conseguem começar a limpeza do mesmo card. A primeira que termina apaga a marca usada pela outra. Depois disso, alguém pode voltar o card para Edição enquanto a segunda ainda apaga arquivos. A execução isolada ficou protegida. |
+| **A7** | **Ainda falha com confirmações concorrentes** | [acoes.ts:129](supabase/functions/drive/acoes.ts:129) e [038:83](supabase/038_limpeza_trava_videos_e_pauta.sql:83). Retirar o envio da lista e registrar o arquivo são operações separadas. Duas confirmações podem retirar ambos os ids antes de registrar os dois vídeos. O primeiro registro então libera a postagem com o outro vídeo ainda ausente. Reproduzido com o servidor real do repositório e banco simulado conforme o 038. |
+| **B3** | **ok para o cenário apontado** | [acoes.ts:108](supabase/functions/drive/acoes.ts:108), [comum.ts:38](supabase/functions/drive/comum.ts:38). PDF declarado como foto deixa de ser aceito como imagem ou capa. Bytes desconhecidos só passam como documento quando a declaração e o tipo do Drive também indicam documento. |
+| **N1** | **ok** | [banco.ts:47](supabase/functions/postar-meta/banco.ts:47), [estado.ts:153](supabase/functions/postar-meta/estado.ts:153). A conferência anterior à publicação verifica se aquela rede continua escolhida. |
+| **N2** | **Ainda falha com rascunho anterior ao conserto** | [estado.ts:142](supabase/functions/postar-meta/estado.ts:142). Rascunhos sem assinatura do conteúdo continuam sendo reutilizados. Reproduzi o banco com legenda **“CORRIGIDA”** e a publicação saindo com **“ANTIGA”**. Rascunhos criados pelo código novo ficaram protegidos. |
+| **N3** | **Ainda falha durante a organização da pasta** | [Ficha.tsx:161](src/components/ficha/Ficha.tsx:161), [Ficha.tsx:168](src/components/ficha/Ficha.tsx:168). Os campos são liberados antes de aguardar `organizarCard`. Se essa chamada demora, a pessoa volta a digitar; quando termina, a ficha fecha sem gravar esse texto adicional. O período de gravação e envio dos anexos ficou protegido. |
+| **N4** | **ok para a ressurreição da ideia** | [ideias.ts:158](src/lib/dados/ideias.ts:158). O print modifica somente uma ideia existente. A operação não cria novamente uma ideia apagada. Há outra falha na combinação entre prints, descrita na Parte 3. |
+| **N5** | **ok** | [anexos.ts:136](src/lib/dados/anexos.ts:136). A nova ordem inclui também arquivos antigos do armazenamento do Supabase, usando a função do servidor para gravar. |
+| **N6** | **ok** | [envios.ts:46](src/lib/dados/envios.ts:46). Envios com sinal recente ficam aguardando; vencido o sinal, aparecem como interrompidos. O aviso depende do próximo ciclo de verificação e da execução dos temporizadores pelo navegador. |
+| **N7** | **ok, depende de 038** | [038:164](supabase/038_limpeza_trava_videos_e_pauta.sql:164). Título enviado vazio na exceção fica vazio, em vez de herdar o título da série. |
+| **Ferreiro 1** | **ok** | [ficha-da-url.ts:11](src/components/conteudos/ficha-da-url.ts:11), [TelaConteudos.tsx:245](src/components/conteudos/TelaConteudos.tsx:245), [AvisoEnvio.tsx:43](src/components/casca/AvisoEnvio.tsx:43). O endereço é consumido uma vez, trocar de card cria uma ficha nova e o aviso na própria Esteira não recoloca o parâmetro no endereço. |
+| **Ferreiro 2** | **ok para aprovar durante o envio, depende de 038** | [038:58](supabase/038_limpeza_trava_videos_e_pauta.sql:58), [038:114](supabase/038_limpeza_trava_videos_e_pauta.sql:114). A lista existe em qualquer etapa; entrar em Aprovado com envios pendentes liga a marca. Permanece a falha de confirmação concorrente do A7. |
+| **Ferreiro 3** | **ok para preservar o vídeo antigo** | [anexos.ts:130](src/lib/dados/anexos.ts:130), [envios.ts:103](src/lib/dados/envios.ts:103). O segundo salvar entrega a exclusão dos vídeos antigos ao envio já em andamento. |
+| **Ferreiro 4** | **ok para os cliques repetidos** | [repositorio.ts:317](src/lib/dados/repositorio.ts:317). Zero linhas apagadas exige reconferência; se a marca já não existe, não devolve o selo. A falha dessa reconferência é um achado novo abaixo. |
+| **Ferreiro 5** | **Ainda falha como proteção de segurança no código** | [convite.ts:7](src/components/entrar/convite.ts:7), [TelaNovaSenha.tsx:35](src/components/entrar/TelaNovaSenha.tsx:35). A dispensa da senha atual depende exclusivamente de uma chave editável no navegador, sem vínculo com usuário, prazo ou comprovação do convite. Reproduzi a função reconhecendo “convite” apenas ao definir essa chave. Não verifiquei se a configuração do Supabase acrescenta uma exigência no servidor. |
+
+**Parte 2: sequência dos SQL 034 a 046**
+
+Só existem nesta cópia: **034, 035, 036, 037, 038, 040 e 041**. Não encontrei **039 nem 042 a 046**, inclusive nas subpastas pesquisadas.
+
+A ordem verificável é:
+
+`034 → 035 → 036 → 037 → 038 → 040 → 041`
+
+| Conferência | Resultado |
+|---|---|
+| **Dependências** | O 034 depende da base de postagem, incluindo 019/027/032/033. O 035 depende da pauta 315. O 036 depende das permissões do 022. O 037 vem depois do 034; o 038 depois de 034/035/037 e da pauta; o 041 exige o 040. |
+| **Função substituída por versão antiga** | Não identifiquei na sequência disponível. O 037 mantém a palavra final sobre `tentar_de_novo` e `alarme_tocou`; o 038 mantém a palavra final sobre `arquivos_video_novo`, preservando a regra do carrossel do 034. |
+| **Pauta atual versus cópias antigas** | O `salvar_planejada` do 038 conserva o tratamento da hora vazia introduzido em 27/10. Os arquivos disponíveis não recolocam a versão antiga de `postagens_calendario` nem de `tarefas_risca_pauta`. |
+| **Gatilhos duplicados** | Não encontrei criação duplicada nos scripts. As recriações removem primeiro o gatilho com o mesmo nome. O gatilho existente de vídeo passa a executar o corpo atualizado da função. |
+| **Mudanças de assinatura** | O 038 substitui `marcar_video_pendente(uuid)` pela versão com segundo argumento opcional. O 040 substitui `salvar_tarefa` pela versão com conferência de versão. O 041 apaga e recria `postar_agora`, pois a resposta muda para um objeto com antes/depois. A tela atual está alinhada com essas mudanças. |
+| **Comportamento após aplicar** | Permanecem as falhas A6 e A7 da Parte 1. Portanto, a sequência não está livre de problemas, mesmo sem uma quebra estrutural de ordem. |
+
+**Não posso afirmar que a aplicação sobre o banco atual termina sem erro.** Isso exigiria comparar as definições, permissões e dependências vivas com os scripts. Os relatos dos consertos registram leituras anteriores da produção, mas não substituem essa conferência nesta sessão.
+
+**Parte 3: cinco bugs novos, do mais grave ao menos grave**
+
+| Título | Arquivo:linha | Defeito | Cenário | Gravidade | Confiança |
+|---|---|---|---|---|---|
+| **1. Rede acrescentada durante a publicação fica sem post, mas o card vai para Postado** | [estado.ts:216](supabase/functions/postar-meta/estado.ts:216) | A conclusão usa a lista de redes carregada no começo da execução. Não relê a escolha atual antes de mover o card. | A execução começa só com Instagram. Facebook é acrescentado enquanto publica. Reproduzi o card final com as duas redes, somente uma publicação e etapa Postado. | **Alta** | **Alta, reproduzido** |
+| **2. Falha ao acrescentar print apaga arquivo que outra gravação acabou de referenciar** | [ideias.ts:155](src/lib/dados/ideias.ts:155), [ideias.ts:166](src/lib/dados/ideias.ts:166) | As operações usam a lista otimista, que já inclui prints ainda não confirmados. Se acrescentar um print falha, a limpeza apaga esse arquivo mesmo que uma segunda operação tenha gravado sua referência. | Com print P, acrescentar Q e logo retirar P. A retirada grava `[Q]`; a inclusão de Q falha. Reproduzi banco e tela apontando para Q, com os arquivos P **e Q apagados**. | **Média** | **Alta, reproduzido** |
+| **3. Retomar envio após recarregar deixa pendências que não serão concluídas** | [envios.ts:92](src/lib/dados/envios.ts:92), [acoes.ts:92](supabase/functions/drive/acoes.ts:92), [038:69](supabase/038_limpeza_trava_videos_e_pauta.sql:69) | Escolher novamente cria outro id de envio; o anterior permanece na lista do banco. Além disso, confirmar um arquivo já registrado retorna antes de retirar o novo id da lista. | Recarregar durante um envio e escolher o vídeo novamente. Mesmo após o sucesso, a postagem continua bloqueada. Reproduzi a confirmação retornando 200 com a pendência intacta e nenhuma chamada a `video_chegando`. | **Média** | **Alta: confirmação reproduzida; retomada confirmada no código** |
+| **4. Vídeo entregue continua pendente na ficha aberta e impede programar** | [anexos.ts:97](src/lib/dados/anexos.ts:97), [anexos.ts:124](src/lib/dados/anexos.ts:124), [anexos-vivos.ts:11](src/components/ficha/anexos-vivos.ts:11) | O envio em segundo plano retorna sem substituir o arquivo provisório. Quando o vídeo chega, ele é acrescentado à ficha, mas o provisório com `pendente` continua lá. | Anexar vídeo e Aprovar mantendo a ficha aberta. Após a entrega, a publicação continua pedindo para salvar o arquivo pendente. Reproduzi um item pendente mais o vídeo entregue; salvar novamente não removeu o pendente. | **Média** | **Alta, reproduzido** |
+| **5. “Parar” considera reconferência com erro como confirmação de sucesso** | [repositorio.ts:318](src/lib/dados/repositorio.ts:318) | A consulta usada para verificar se a marca permaneceu ignora `error`. Resposta sem dados por falha vira “marca não existe”. | A exclusão retorna zero linhas e a consulta seguinte falha. O selo some localmente, sem aviso, embora a marca possa continuar no banco. | **Baixa** | **Alta, confirmado pelo código** |
+
+Validação executada: **lint com zero erros e 19 avisos**, **checagem de tipos passando** e **`git diff --check` limpo**. As reproduções rodaram em memória, sem serviços reais; no A7, o comportamento do banco foi simulado conforme o SQL 038. O Vitest não iniciou porque o ambiente somente leitura bloqueou a criação do arquivo de controle. Não executei build nem apliquei SQL.

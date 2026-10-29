@@ -3,6 +3,7 @@
 "use client";
 import { useEffect, useSyncExternalStore } from "react";
 import { supabase } from "@/lib/supabase/cliente";
+import { falhou } from "./repositorio";
 import { AVISOS, ligarTempoReal } from "./tempo-real";
 import type { Responsavel } from "./tipos";
 
@@ -44,13 +45,41 @@ async function carregar(c: CampoNota, quem: Responsavel, dia: string) {
   if (!error && !sujas.has(k)) definir(k, (data?.texto as string | undefined) ?? "");
 }
 
-async function gravar(k: string) {
+// M6: uma gravação por vez por nota (fila): duas pausas seguidas chegam ao banco na ordem, e cada uma lê o texto na hora em que sai.
+const filas = new Map<string, Promise<void>>();
+const ESPERA_NOVA_TENTATIVA = 5000, MAX_TENTATIVAS = 3; // r4 (economizar execuções): sem o limite, banco fora do ar = uma chamada a cada 5 s para sempre
+const tentativas = new Map<string, number>();
+function gravar(k: string) {
   atrasos.delete(k);
+  const vez = (filas.get(k) ?? Promise.resolve()).then(() => enviar(k));
+  filas.set(k, vez);
+  return vez;
+}
+
+async function enviar(k: string) {
   const [c, quem, dia] = k.split("|") as [CampoNota, Responsavel, string], id = await idDe(quem), texto = textos.get(k) ?? "";
   if (!id) return;
   const { error } = await supabase().from(TABELA[c]).upsert({ dono_id: id, dia, texto }, { onConflict: "dono_id,dia" });
-  // ponytail: se o banco recusar, a nota fica só na tela e tenta de novo na próxima digitação; aviso de falha quando a Esteira ganhar o aviso comum.
-  if (!error && !atrasos.has(k) && textos.get(k) === texto) sujas.delete(k);
+  if (error) {
+    // M6: o texto fica na tela, a pessoa é avisada e a gravação volta sozinha (a próxima digitação ou a saída da aba também gravam)
+    const n = tentativas.get(k) ?? 0;
+    falhou(n < MAX_TENTATIVAS ? "Não consegui guardar a anotação. Ela continua na tela e eu tento de novo sozinho; não feche a página ainda."
+      : "Não consegui guardar a anotação. Ela continua na tela: confira a internet e digite de novo para gravar.");
+    if (!atrasos.has(k) && n < MAX_TENTATIVAS) { tentativas.set(k, n + 1); atrasos.set(k, setTimeout(() => void gravar(k), ESPERA_NOVA_TENTATIVA)); }
+    return;
+  }
+  tentativas.delete(k);
+  if (!atrasos.has(k) && textos.get(k) === texto) sujas.delete(k);
+}
+
+/** Muda o texto na tela na hora e grava 600 ms depois da última tecla. */
+export function escreverNota(c: CampoNota, quem: Responsavel, dia: string, valor: string) {
+  const k = chave(c, quem, dia);
+  sujas.add(k);
+  tentativas.delete(k); // digitou de novo: volta a ter as novas tentativas
+  definir(k, valor);
+  clearTimeout(atrasos.get(k));
+  atrasos.set(k, setTimeout(() => void gravar(k), 600));
 }
 
 /** Anotação de `quem` no `dia`. `mudar` só existe para a própria pessoa; caderno de outra pessoa é só leitura (o banco também barra). */
@@ -58,13 +87,7 @@ export function useNotaDia(c: CampoNota, quem: Responsavel | null, dia: string, 
   const k = chave(c, quem ?? "", dia);
   const texto = useSyncExternalStore(assinar, () => textos.get(k) ?? "", () => "");
   useEffect(() => { if (quem) void carregar(c, quem, dia); }, [c, quem, dia]);
-  const mudar = (valor: string) => {
-    if (!quem || !editavel) return;
-    sujas.add(k);
-    definir(k, valor);
-    clearTimeout(atrasos.get(k));
-    atrasos.set(k, setTimeout(() => void gravar(k), 600));
-  };
+  const mudar = (valor: string) => { if (quem && editavel) escreverNota(c, quem, dia, valor); };
   return [texto, mudar] as const;
 }
 

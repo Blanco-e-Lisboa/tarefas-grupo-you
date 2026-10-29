@@ -11,6 +11,7 @@ export const AVISOS = {
   esteira: ["esteira", "cartao:"], agenda: ["agenda:", "acesso:"], feitos: ["feitos:"], ideias: ["ideias"], pastas: ["pastas"], caderno: ["caderno:"],
 } as const;
 
+let ligacoes = 0;
 /** Liga um canal nos avisos de `chaves`; vários avisos seguidos viram uma só chamada de `aoMudar`. Devolve a função que desliga (chame ao sair da tela). */
 export function ligarTempoReal(nome: string, chaves: readonly string[], aoMudar: () => void, espera = 300): () => void {
   if (typeof window === "undefined") return () => {};
@@ -23,7 +24,8 @@ export function ligarTempoReal(nome: string, chaves: readonly string[], aoMudar:
   try {
     const sb = supabase();
     const filtro = { schema: "public", table: "aviso_mudanca" } as const;
-    const canal = sb.channel(`tempo-real:${nome}`).on("postgres_changes", { event: "INSERT", ...filtro }, ouvir).on("postgres_changes", { event: "UPDATE", ...filtro }, ouvir);
+    // M5: nome único por ligação. Com o mesmo nome, o cliente devolve o canal anterior que ainda está saindo (removeChannel é assíncrono) e a tela nova fica surda.
+    const canal = sb.channel(`tempo-real:${nome}:${++ligacoes}`).on("postgres_changes", { event: "INSERT", ...filtro }, ouvir).on("postgres_changes", { event: "UPDATE", ...filtro }, ouvir);
     canal.subscribe(); // falha de conexão ou tabela ainda não criada: sem aviso, a tela só não recebe eventos
     return () => { clearTimeout(atraso); void sb.removeChannel(canal); };
   } catch {

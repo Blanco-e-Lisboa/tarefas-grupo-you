@@ -9,17 +9,12 @@ import { AVISOS, ligarTempoReal } from "./tempo-real"; import { gravarExtras } f
 import { campoOcasiao, paraBanco, podeAlterar, podeApagar, postadoEmDe, trocarFazendo } from "./repositorio-regras";
 export { campoOcasiao, paraBanco, podeAlterar, podeApagar, postadoEmDe, trocarFazendo };
 import { campoConsertoTexto, fecharAprovada } from "./esteira";
-import { carregarPostagens, postando, postarEmQueVale, redesQueValem } from "./postagens";
-import type { Empresa, Fazendo, NovaTarefa, Postagem, Responsavel, Tag, Tarefa } from "./tipos";
+import { carregarPostagens, postarEmQueVale, redesQueValem } from "./postagens";
+import type { Empresa, Fazendo, NovaTarefa, Responsavel, Tag, Tarefa } from "./tipos";
+import { APAGADO, daLinha, funcaoAusente, motivoDoBanco, MUDOU, semAcesso, type LinhaTarefa } from "./linha-tarefa";
+import { anotarMudancaPropria, salvarNaVez } from "./versao-card";
+export { APAGADO, daLinha, funcaoAusente, motivoDoBanco, MUDOU };
 
-type LinhaTarefa = {
-  id: string; titulo: string; tipo: Tarefa["tipo"]; empresa_id: string | null; rede: Tarefa["rede"] | null; etapa: Tarefa["etapa"] | null;
-  responsavel_id: string; inicio: string | null; fim: string | null; dia_inteiro: boolean; cor: Tarefa["cor"]; concluida: boolean;
-  objetivo: string | null; notas: string | null; links: Tarefa["links"]; aprovador: string | null;
-  dono_id: string; criado_por: string; enviada_por: string | null; vai_pro_google?: boolean; planejada_id?: string | null; /* 315: só existe depois do SQL da pauta */ postar_em?: string | null; conserto?: boolean; conserto_texto?: string | null; formato?: Tarefa["formato"] | null;
-  postado_em?: string | null; legenda?: string | null; postar_redes?: Tarefa["postarRedes"] | null; capa_quadro_ms?: number | null; ocasiao_id?: string | null;
-  tarefa_tags?: { tag_id: string }[]; linha_caderno?: number | null; cor_linha?: Tarefa["corLinha"] | null; /* 292/296: só existem depois do SQL colado */
-};
 type Pessoa = { id: string; slug: Responsavel; user_id: string | null };
 
 let tarefas: Tarefa[] = [];
@@ -58,21 +53,6 @@ type LinhaFazendo = { pessoa_id: string; tarefa_id: string; desde: string };
 const doBanco = (ls: LinhaFazendo[]) =>
   ls.toSorted((a, b) => a.desde.localeCompare(b.desde)).reduce((m, l) => { const q = slugDe(l.pessoa_id); return q ? trocarFazendo(m, q, l.tarefa_id, l.desde) : m; }, {} as Record<string, Fazendo>);
 
-/** Linha do banco -> Tarefa da tela. `arquivos` vem da tabela arquivos (ver carregarAnexos); `postagens`, da tabela postagens (019). */
-export function daLinha(l: LinhaTarefa, arquivos: Tarefa["arquivos"] = [], quem: (id: string | null) => Responsavel | undefined = slugDe, postagens?: Postagem[]): Tarefa {
-  const ids = l.tarefa_tags?.map((x) => x.tag_id);
-  return {
-    id: l.id, titulo: l.titulo, tipo: l.tipo, empresaId: l.empresa_id ?? "", rede: l.rede ?? undefined, etapa: l.etapa ?? undefined,
-    responsavel: quem(l.responsavel_id) ?? "natham", inicio: l.inicio ?? undefined, fim: l.fim ?? undefined, diaInteiro: l.dia_inteiro,
-    cor: l.cor, concluida: l.concluida || undefined, objetivo: l.objetivo ?? undefined, notas: l.notas ?? undefined,
-    links: l.links ?? [], arquivos, tags: ids?.length ? ids : undefined, aprovador: l.aprovador ?? undefined,
-    dono: quem(l.dono_id), criadoPor: quem(l.criado_por), enviadaPor: quem(l.enviada_por), vaiProGoogle: l.vai_pro_google || undefined, planejadaId: l.planejada_id ?? undefined,
-    postarEm: l.postar_em ?? undefined, postadoEm: l.postado_em ?? undefined, conserto: l.conserto || undefined, consertoTexto: l.conserto_texto === undefined ? undefined : l.conserto_texto ?? "", formato: l.formato ?? undefined,
-    legenda: l.legenda ?? undefined, postarRedes: l.postar_redes ?? undefined, capaQuadroMs: l.capa_quadro_ms ?? undefined, ocasiaoId: l.ocasiao_id ?? undefined,
-    postagens: postagens?.length ? postagens : undefined, linhaCaderno: l.linha_caderno ?? undefined, corLinha: l.cor_linha ?? undefined,
-  };
-}
-
 function iniciar() {
   if (typeof window === "undefined" || iniciado) return;
   iniciado = carregar();
@@ -84,17 +64,20 @@ const daTag = (x: Tag): Tag => ({ id: x.id, nome: x.nome, cor: x.cor, ...(x.apro
 
 /** 274 · Leitura x gravação: enquanto alguma gravação está no ar, a leitura espera (relerDepois) e, se uma gravação começou depois dela,
     a resposta é descartada. Sem isso, o aviso do banco trazia o dado antigo por cima da tela e o card "voltava". */
-let escrevendo = 0, relerDepois = false, leitura = 0;
+let escrevendo = 0, relerDepois = false, leitura = 0, gravacoes = 0; // gravacoes: quantas gravações já terminaram (r2 B7)
 const protegida = <A extends unknown[], R>(f: (...a: A) => Promise<R>) => async (...a: A): Promise<R> => {
   escrevendo++; leitura++;
-  try { return await f(...a); } finally { leitura++; if (--escrevendo === 0 && relerDepois) { relerDepois = false; void carregar(); } }
+  try { return await f(...a); } finally { leitura++; gravacoes++; if (--escrevendo === 0 && relerDepois) { relerDepois = false; void carregar(); } }
 };
 
 /** Só para o teste da corrida (repositorio-corrida.test.ts). */
 export const carregarAgora = () => carregar();
 async function carregar() {
   if (escrevendo) { relerDepois = true; return; }
-  const n = ++leitura;
+  const n = ++leitura, feitas = gravacoes;
+  // Leitura velha é descartada. Gravação no ar: relê quando ela acabar. r2 B7: se a gravação que a atropelou JÁ acabou, relê agora
+  // (senão a mudança de outra pessoa que esta leitura trazia ficava fora da tela). Atropelada só por outra leitura: a outra vale.
+  const descartar = () => { if (escrevendo) relerDepois = true; else if (feitas !== gravacoes) void carregar(); };
   const sb = supabase();
   const [p, e, t, g, f, sessao] = await Promise.all([
     sb.from("pessoas").select("id, slug, user_id"),
@@ -106,45 +89,31 @@ async function carregar() {
   ]);
   const problema = p.error ?? e.error ?? t.error ?? g.error ?? f.error;
   if (problema) return falhou("Não consegui carregar os dados. Recarregue a página.");
-  if (n !== leitura || escrevendo) { relerDepois ||= !!escrevendo; return; } // uma gravação começou no meio: esta leitura já nasceu velha
+  if (n !== leitura || escrevendo) return descartar(); // uma gravação começou no meio: esta leitura já nasceu velha
   pessoas = p.data as Pessoa[];
   eu = pessoas.find((x) => x.user_id === sessao.data?.claims.sub)?.slug ?? null;
   if (!eu) falhou("Seu login ainda não está ligado a uma pessoa. Fale com o Natham.");
   const [anexos, postagens] = await Promise.all([carregarAnexos(sb), carregarPostagens(sb)]);
-  if (n !== leitura || escrevendo) { relerDepois ||= !!escrevendo; return; }
+  if (n !== leitura || escrevendo) return descartar();
+  if (!anexos) falhou("Não consegui ler os anexos dos cards agora. Os que já estavam na tela continuam; recarregue a página."); // M10: falha não vira "card sem anexo"
   empresas = e.data as Empresa[];
   tags = (g.data as Tag[]).map(daTag);
-  tarefas = (t.data as LinhaTarefa[]).map((l) => daLinha(l, anexos.get(l.id) ?? tarefas.find((x) => x.id === l.id)?.arquivos.filter((a) => a.pendente), slugDe, postagens.get(l.id)))
+  // M9: anexo que esta aba ainda sobe fica na tela junto com os do banco. M10: leitura falhou = ficam os que já estavam.
+  const anexosDe = (id: string) => { const velhos = tarefas.find((x) => x.id === id)?.arquivos; return anexos ? [...(anexos.get(id) ?? []), ...(velhos?.filter((a) => a.pendente) ?? [])] : velhos; };
+  tarefas = (t.data as LinhaTarefa[]).map((l) => daLinha(l, anexosDe(l.id), slugDe, postagens.get(l.id)))
     .map((x) => (cancelados.has(x.id) && !x.postarEm ? { ...x, programacaoCancelada: true } : x));
   fazendo = doBanco(f.data as LinhaFazendo[]);
   avisar();
-  // Postando (196): a função grava o resultado no servidor; enquanto algum card posta, olha de novo a cada 15 s (só leitura, só com a aba aberta).
-  clearTimeout(espiando);
-  if (tarefas.some(postando) || Date.now() < espiarAte) espiar();
+  // r4 (economizar execuções): o resultado do Postando chega pelo tempo real (o sino de `postagens` e de `tarefas` toca "esteira").
+  // Antes a tela relia tudo a cada 15 s enquanto algum card postava.
 }
 
-let espiando: ReturnType<typeof setTimeout> | undefined;
 const cancelados = new Set<string>(); // cards cuja programação o salvar desta sessão tirou (ver salvarTarefa)
-let espiarAte = 0; // depois de mandar postar, a função pode levar alguns segundos para registrar: olha por 2 min mesmo sem linha nova
-const espiar = () => { clearTimeout(espiando); espiando = setTimeout(() => { if (!document.hidden) void carregar(); }, 15_000); };
 
-const soLeitura = "Essa tarefa é só para olhar: você não pode mexer nela."; const semAcesso = "O banco não deixou salvar (sem permissão ou o item não existe mais).";
-/** Recusas do banco que a pessoa entende (015/019): quem aprova, e Aprovado/Postado só para Postagem. */
-export function motivoDoBanco(e: unknown, padrao: string) {
-  const { code, message } = (e ?? {}) as { code?: string; message?: string };
-  if (code === "42501") return "Só o Natham ou quem aprova o card pode fazer isso.";
-  if (code === "23514" && message?.includes("tarefas_pauta_sem_etapa")) return "Tarefa da pauta de postagens fica no Caderno: ela não vira card da Esteira. O post sai pela Esteira.";
-  if (code === "23514" && message?.includes("Postagem")) return "Só card de Postagem vai para Aprovado e Postado. Para terminar, use Concluir.";
-  return e instanceof Error && e.message === semAcesso ? e.message : padrao;
-}
+const soLeitura = "Essa tarefa é só para olhar: você não pode mexer nela.";
 
-/** A função public.salvar_tarefa só existe depois do 007. PGRST202 = a API não a encontrou (42883 = o Postgres não a achou). */
-let semSalvarTarefa = false;
-export const funcaoAusente = (e: { code?: string } | null) => e?.code === "PGRST202" || e?.code === "42883";
-
-/** Devolve a tarefa gravada, ou null se o banco recusou (nada mudou). Gravada com anexo que não subiu: devolve a tarefa e o aviso
-    (lerErro) diz que "a tarefa foi salva, mas..." (Lupa 215 v2: quem chama trata como salva). */
-async function salvarTarefaDireto(nova: NovaTarefa): Promise<Tarefa | null> {
+/** Grava o card (sem os anexos). Devolve a tarefa gravada e como estava antes, ou null se o banco recusou (nada mudou). */
+async function gravarCardDireto(nova: NovaTarefa): Promise<{ tarefa: Tarefa; antes?: Tarefa } | null> {
   const id = nova.id ?? crypto.randomUUID();
   const antes = tarefas.find((t) => t.id === id);
   const dono = antes?.dono ?? nova.enviarPara ?? eu ?? undefined;
@@ -170,46 +139,48 @@ async function salvarTarefaDireto(nova: NovaTarefa): Promise<Tarefa | null> {
       ...campoOcasiao(tarefa.ocasiaoId, antes?.ocasiaoId), ...campoConsertoTexto(tarefa.consertoTexto, antes?.consertoTexto),
       // só vai quando é verdade: antes do 010 a coluna não existe e mandar `false` derrubaria o salvar de toda tarefa do Caderno
       ...(tarefa.vaiProGoogle ? { vai_pro_google: true } : {}) };
-    // Caminho novo: tarefa e tags numa só chamada (007). Se a função ainda não existe no banco, segue pelo caminho antigo.
-    let gravada = false;
-    if (!semSalvarTarefa) {
-      const { error } = await sb.rpc("salvar_tarefa", { p: linha, p_tags: tarefa.tags ?? [] });
-      if (!error) gravada = true;
-      else if (funcaoAusente(error)) semSalvarTarefa = true;
-      else throw error;
-    }
-    if (!gravada) {
-      if (antes) {
-        const { data, error } = await sb.from("tarefas").update(campos).eq("id", id).select("id");
-        if (error) throw error;
-        if (!data?.length) throw new Error(semAcesso);
-      } else {
-        const { error } = await sb.from("tarefas").insert(linha);
-        if (error) throw error;
-      }
-      const a = (antes?.tags ?? []).join(), b = (tarefa.tags ?? []).join();
-      if (a !== b) {
-        if (antes) { const { error } = await sb.from("tarefa_tags").delete().eq("tarefa_id", id); if (error) throw error; }
-        if (tarefa.tags?.length) { const { error } = await sb.from("tarefa_tags").insert(tarefa.tags.map((tag_id) => ({ tarefa_id: id, tag_id }))); if (error) throw error; }
-      }
-    }
+    // Tarefa e tags numa só chamada (007; com o número de edição desde o 040). r3: saiu o caminho de reserva de antes do 007 (a função existe em
+    // produção desde então; o reserva gravava só parte dos campos e passaria por cima da conferência de versão se a API demorasse a ver o 040).
+    // A1: manda o número de edição que a tela viu (ver versao-card.ts); o banco devolve o número novo. r2 F1: vai também quando o card
+    // já sumiu da memória (outra pessoa apagou e o tempo real tirou): com o número, o banco recusa em vez de criar o card de novo.
+    const { data, error } = await salvarNaVez(id, nova.id ? tarefa.versao : undefined, (de) => sb.rpc("salvar_tarefa", { p: linha, p_tags: tarefa.tags ?? [], ...(de !== undefined && { p_versao: de }) }));
+    if (error) throw error;
+    if (typeof data === "number") tarefa.versao = data;
   } catch (e) {
-    tarefas = antes ? tarefas.map((t) => (t.id === id ? antes : t)) : tarefas.filter((t) => t.id !== id);
+    // B7: só desfaz se a tela ainda mostra o que ESTE salvar pôs; um salvar seguinte já pôs outra coisa por cima e não pode ser apagado.
+    if (tarefas.find((t) => t.id === id) === tarefa) tarefas = antes ? tarefas.map((t) => (t.id === id ? antes : t)) : tarefas.filter((t) => t.id !== id);
+    relerDepois = true; // quando as gravações acabarem, a tela relê o que o banco tem de verdade
     falhou(motivoDoBanco(e, "Não consegui salvar a tarefa. Tente de novo."));
     return null;
   }
   if (!(await gravarExtras(id, antes, tarefa))) falhou("Não consegui guardar a linha ou a cor da tarefa. Tente de novo.");
-  // A tarefa já está no banco (o anexo precisa dela). Se o anexo falhar, a tarefa fica e o aviso diz que o anexo não subiu.
+  return { tarefa, antes };
+}
+
+/** M9: os anexos sobem FORA da trava de leitura (o card já está gravado): um envio de minutos não congela mais a tela.
+    A tarefa já está no banco (o anexo precisa dela). Se o anexo falhar, a tarefa fica e o aviso diz que o anexo não subiu. */
+async function subirAnexos(tarefa: Tarefa, antes: Tarefa | undefined): Promise<Tarefa> {
+  const id = tarefa.id;
+  const conhecidos = new Set([...(antes?.arquivos ?? []), ...tarefa.arquivos].flatMap((a) => (a.id ? [a.id] : []))); // o que ESTE salvar viu (antes de subir)
   try {
-    const arquivos = await sincronizarAnexos(supabase(), id, tarefa.empresaId, eu && idDe(eu), antes?.arquivos ?? [], tarefa.arquivos);
+    const arquivos = await sincronizarAnexos(supabase(), id, tarefa.empresaId, eu ? idDe(eu) : undefined, antes?.arquivos ?? [], tarefa.arquivos);
     tarefa.arquivos = arquivos;
-    tarefas = tarefas.map((t) => (t.id === id ? { ...t, arquivos } : t));
+    // bug novo 6 do Codex: o que chegou na tela DURANTE o envio (anexo de outra pessoa, vídeo em segundo plano) fica; só o que este salvar viu é trocado
+    const chegou = (t: Tarefa) => t.arquivos.filter((a) => a.id && !conhecidos.has(a.id) && !arquivos.some((x) => x.id === a.id));
+    tarefas = tarefas.map((t) => (t.id === id ? { ...t, arquivos: [...arquivos, ...chegou(t)] } : t));
     avisar();
   } catch (e) {
     falhou(e instanceof ErroAnexo ? `A tarefa foi salva, mas ${e.message}` : "A tarefa foi salva, mas não consegui guardar os anexos. Abra a ficha e anexe de novo.");
   }
   return tarefa;
 }
+const gravarCard = protegida(gravarCardDireto);
+/** Devolve a tarefa gravada, ou null se o banco recusou (nada mudou). Gravada com anexo que não subiu: devolve a tarefa e o aviso
+    (lerErro) diz que "a tarefa foi salva, mas..." (Lupa 215 v2: quem chama trata como salva). */
+export const salvarTarefa = async (nova: NovaTarefa): Promise<Tarefa | null> => {
+  const r = await gravarCard(nova);
+  return r && subirAnexos(r.tarefa, r.antes);
+};
 
 async function removerTarefaDireto(id: string): Promise<void> {
   const alvo = tarefas.find((t) => t.id === id);
@@ -226,6 +197,11 @@ async function removerTarefaDireto(id: string): Promise<void> {
     return;
   }
   const { data, error } = await apagarSemAnexo(alvo, id); // 287: card de conteúdo passa pela função apagar_card (029)
+  // M10: a tela não sabia dos anexos (a leitura deles falhou), o banco sabe: apaga pelo caminho que tira os arquivos junto
+  if (error?.message?.includes("card com anexo")) {
+    try { await apagarTarefaComArquivos(id); } catch (e) { tarefas = antes; falhou(e instanceof Error && e.message ? e.message : "Não consegui apagar a tarefa. Tente de novo."); }
+    return;
+  }
   if (error || !data?.length) {
     tarefas = antes;
     falhou(error ? motivoDoBanco(error, "Não consegui apagar a tarefa. Tente de novo.") : semAcesso);
@@ -234,14 +210,15 @@ async function removerTarefaDireto(id: string): Promise<void> {
 
 /** "Postar agora" (196): só Natham/aprovador, card de Postagem em Aprovado; o banco marca a hora e chama a função. */
 async function postarAgoraDireto(id: string): Promise<void> {
-  const { error } = await supabase().rpc("postar_agora", { p_tarefa: id });
+  const { data, error } = await supabase().rpc("postar_agora", { p_tarefa: id });
   if (error) return falhou(motivoDoBanco(error, "Não consegui mandar postar. Tente de novo."));
   // Mostra "Postando…" na hora (a rede que já saiu fica como está); a próxima carga traz o que a função gravou.
   tarefas = tarefas.map((t) => (t.id === id ? { ...t, postagens: (t.postarRedes ?? ["instagram", "facebook"]).map((rede) => t.postagens?.find((p) => p.rede === rede && p.status === "postado") ?? { rede, status: "fila" as const }) } : t));
   avisar();
-  espiarAte = Date.now() + 120_000;
-  espiar();
+  mandou(id, data);
 }
+/** Depois de mandar postar: olha por 2 min. O "Postar agora" (041) devolve o número de edição antes/depois da mudança dele: anota como desta aba (r3 A1). */
+const mandou = (id: string, resposta?: unknown) => { anotarMudancaPropria(id, tarefas.find((t) => t.id === id)?.versao, resposta); };
 
 /** "Tentar de novo" (196): volta para a fila só as redes que deram erro (a que já saiu não repete). */
 async function tentarDeNovoDireto(id: string): Promise<void> {
@@ -249,8 +226,7 @@ async function tentarDeNovoDireto(id: string): Promise<void> {
   if (error) return falhou(motivoDoBanco(error, "Não consegui tentar de novo. Tente outra vez."));
   tarefas = tarefas.map((t) => (t.id === id ? { ...t, postagens: t.postagens?.map((p) => (p.status === "erro" ? { ...p, status: "fila" as const, erro: undefined } : p)) } : t));
   avisar();
-  espiarAte = Date.now() + 120_000;
-  espiar();
+  mandou(id);
 }
 
 async function salvarEmpresaDireto(empresa: Empresa): Promise<Empresa> {
@@ -333,11 +309,13 @@ async function pararDireto(): Promise<void> {
   const antes = fazendo;
   fazendo = trocarFazendo(fazendo, eu, null);
   avisar();
-  const { error } = await supabase().from("fazendo_agora").delete().eq("pessoa_id", idDe(eu));
-  if (error) { fazendo = antes; falhou("Não consegui tirar a marca. Tente de novo."); }
+  // B8: a trava que não deixa apagar devolve 0 linhas SEM erro. r3 (Ferreiro 4): 0 linhas também é "a marca já não existe" (2º clique, outra aba): é recusa só se ela ficou
+  const { data, error } = await supabase().from("fazendo_agora").delete().eq("pessoa_id", idDe(eu)).select("pessoa_id");
+  const confere = !error && !data?.length ? await supabase().from("fazendo_agora").select("pessoa_id").eq("pessoa_id", idDe(eu)) : null;
+  const ficou = !!confere && (!!confere.error || !!confere.data?.length); // r4 (novo 5): reconferência com erro não é "a marca já saiu"
+  if (error || ficou) { fazendo = antes; falhou("Não consegui tirar a marca. Tente de novo."); }
 }
 
-export const salvarTarefa = protegida(salvarTarefaDireto);
 export const removerTarefa = protegida(removerTarefaDireto);
 export const postarAgora = protegida(postarAgoraDireto);
 export const tentarDeNovo = protegida(tentarDeNovoDireto);

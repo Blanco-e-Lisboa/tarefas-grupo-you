@@ -9,6 +9,12 @@ export const redesDe = (t: Pick<Tarefa, "postarRedes">): RedePost[] => t.postarR
 type Base = Pick<Tarefa, "arquivos" | "legenda" | "empresaId">;
 /** 309: a data de postagem de um card Postado, "AAAA-MM-DDTHH:mm" em Brasília: quando entrou em Postado (postadoEm); sem ela (card antigo), a hora agendada. */
 export const quandoPostou = (t: Pick<Tarefa, "postadoEm" | "postarEm">): string | undefined => (t.postadoEm ? horaDeBrasilia(t.postadoEm) : undefined) ?? t.postarEm;
+/** M18: o banco lê a data do post como hora de Brasília; a ficha confere com Brasília também, seja qual for o relógio do computador. */
+export const jaPassou = (quando: string, agora = new Date()) => quando < horaDeBrasilia(agora.toISOString());
+export const hojeEmBrasilia = (agora = new Date()) => horaDeBrasilia(agora.toISOString()).slice(0, 10);
+/** M1 (decisão do Natham, 29/10): só a You programa postagem. Tu Ecom e Beec publicam à mão e arrastam o card para Postado. */
+export const SO_YOU = "Só a You programa postagem. Card da Tu Ecom ou da Beec: publique nas redes você mesmo e arraste o card para Postado.";
+export const SO_YOU_CARD = "Só a You programa: publique e arraste para Postado";
 
 /** Só o que já está guardado: arquivo que não subiu (pendente) ou que a limpeza tirou (removido) a função não acha. */
 const midias = (t: Pick<Tarefa, "arquivos">) => t.arquivos.filter((a) => a.papel !== "capa" && a.papel !== "original" && !a.pendente && !a.removido && (a.tipo === "imagem" || a.tipo === "video"));
@@ -27,8 +33,7 @@ export function comoHoraMarcada(texto: string, ligada: boolean) {
   if (ligada) return texto;
   return texto
     .replace(/^Programado/, "Hora marcada").replace(/^Sem programação/, "Sem hora marcada").replace(/^Programação cancelada/, "Hora marcada cancelada")
-    .replace("programe de novo", "marque a hora de novo").replace("a programação é cancelada", "a hora marcada é cancelada")
-    .replace(/^Postagem automática só para a You \(por enquanto\)/, "Postagem automática ainda desligada"); // card da Beec: nem a You posta sozinha ainda
+    .replace("programe de novo", "marque a hora de novo").replace("a programação é cancelada", "a hora marcada é cancelada");
 }
 export const MODO_TESTE = "Modo de teste: cria um rascunho na Meta, não publica.";
 /** `teste` (239): ligada MAS a função postar-meta com POSTAR_DE_VERDADE=nao; o aviso e a confirmação do Postar agora dizem que não publica. */
@@ -44,6 +49,11 @@ export function textosPublicacao(ligada: boolean, programado: boolean, teste = f
     aviso: !ligada ? "Postagem automática ainda desligada: na hora marcada o card vira Postado e você publica nas redes." : teste ? MODO_TESTE : undefined,
   };
 }
+/** r4 F2 (b), decisão do Natham: card com post publicado em TODAS as redes escolhidas não posta de novo (o 039 recusa com esta frase). */
+export const JA_POSTADO = "Este card já foi postado. Para postar de novo, duplique o card.";
+export const jaPostadoEm = (t: Pick<Tarefa, "postagens">, redes: readonly RedePost[]) =>
+  redes.length > 0 && redes.every((r) => t.postagens?.some((p) => p.rede === r && p.status === "postado"));
+
 export const SO_FACEBOOK = "Carrossel com vídeo não vai para o Facebook: acenda o Instagram ou tire o vídeo.";
 /** Carrossel com vídeo marcado só para o Facebook: não posta até alguém acender o Instagram ou tirar o vídeo. */
 export const carrosselSoFacebook = (t: Pick<Tarefa, "arquivos">, formato: Formato | undefined, redes: readonly RedePost[]) =>
@@ -67,6 +77,8 @@ export function faltaParaPostar(t: Base, formato: Formato | undefined, redes: re
 
 /** Erro em que o post pode ter saído (a função caiu ou a resposta se perdeu). Frases do 019 e do Correio. */
 export const INCERTO = /estado incerto|n[aã]o d[aá] para saber/i;
+/** A data do post ainda não chegou (em Brasília): a rede na fila espera a hora, não está postando. */
+const esperaAHora = (t: Pick<Tarefa, "postarEm">, agora: Date) => !!t.postarEm && !jaPassou(t.postarEm, agora);
 const emAndamento = (p: Postagem) => p.status === "fila" || p.status === "enviando" || p.status === "processando";
 const quando = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)} ${s.slice(11, 16)}`;
 
@@ -76,9 +88,10 @@ export type Situacao =
   | { tipo: "programado"; texto: string };
 
 /** O que o card Aprovado mostra sobre a postagem. Postando vence erro; erro vence a data programada. */
-export function situacao(t: Pick<Tarefa, "postagens" | "postarEm" | "postarRedes">): Situacao | null {
+export function situacao(t: Pick<Tarefa, "postagens" | "postarEm" | "postarRedes">, agora = new Date()): Situacao | null {
   const ps = (t.postagens ?? []).filter((p) => redesDe(t).includes(p.rede)); // rede tirada do card não conta (achado b da Lupa)
-  if (ps.some(emAndamento)) return { tipo: "postando" };
+  // r2 B1 (037): "tentar de novo" com data futura deixa a rede na fila até a hora marcada; isso é Programado, não Postando
+  if (ps.some((p) => emAndamento(p) && !(p.status === "fila" && esperaAHora(t, agora)))) return { tipo: "postando" };
   const erros = ps.filter((p) => p.status === "erro");
   if (erros.length) {
     const saiu = ps.find((p) => p.status === "postado");
@@ -97,7 +110,7 @@ export const programacaoCancelada = (t: Pick<Tarefa, "arquivos" | "formato" | "p
 
 /** A linha única do card Aprovado na Esteira (pedido do Natham: os botões ficam na ficha, o card fica baixo). */
 export function estadoDoCard(t: Pick<Tarefa, "empresaId" | "postagens" | "postarEm" | "postarRedes" | "arquivos" | "formato" | "programacaoCancelada">): { texto: string; tom: "normal" | "postando" | "erro" } {
-  if (t.empresaId !== "you") return { texto: "Postagem automática só para a You (por enquanto)", tom: "normal" };
+  if (t.empresaId !== "you") return { texto: SO_YOU_CARD, tom: "normal" };
   const sit = situacao(t);
   if (sit?.tipo === "postando") return { texto: "Postando…", tom: "postando" };
   if (sit?.tipo === "erro") return { texto: "Erro ao postar: abra o card", tom: "erro" };

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { PointerEvent as EventoPonteiro } from "react";
 import { flushSync } from "react-dom";
 import type { CSSProperties } from "react";
-import { comoNatham, marcarEventoFeito, marcarFeita, podeAlterar, podeApagar, podeMarcar, removerTarefa, salvarTarefa, useAgendaEventos, useEventosFeitos, type CorLinha, type Etiqueta, type Responsavel, useEmpresas, useEu, useTarefas, type Tarefa } from "@/lib/dados";
+import { avisarFalha, comoNatham, marcarEventoFeito, marcarFeita, podeAlterar, podeApagar, podeMarcar, removerTarefa, salvarTarefa, useAgendaEventos, useEventosFeitos, type CorLinha, type Etiqueta, type Responsavel, useEmpresas, useEu, useTags, useTarefas, type NovaTarefa, type Tarefa } from "@/lib/dados";
 import { Selecao } from "@/components/ui/Selecao";
 import { Pessoa } from "@/components/ui/Pessoa";
 import { useFiltroEmpresa } from "@/lib/filtro-empresa";
@@ -14,7 +14,8 @@ import { Agenda } from "./Agenda";
 import { Folha, type LinhaFolha } from "./Folha";
 import type { Acoes } from "./MenuTarefa";
 import { arrastarFolha, copiar, virarFolha, type Pedido } from "./virar";
-import { cadernosQueVe, novaDoCaderno, semDataDoCaderno, doCaderno, DURACAO_MAXIMA, duracaoDe, duracaoLimite, duracaoMaxima, ocupadoAs, emConflito, encaixarCompromissos, enviadaPorMim, ehConteudo, ehReuniao, eventosDoDia, horaDe, horaDoSlot, jaTemTarefa, linhasDoBloco, minutos, montarGrade, montarSemData, msAteMeiaNoite, separarCompromissos, somenteNoDeQuemRecebeu, type Continua, type Encaixe, rotuloSlot, SLOTS, somarMinutos } from "./grade";
+import { avisoProgramado, postProgramado } from "@/components/calendario/logica";
+import { cadernosQueVe, copiaDoCaderno, duracaoQuerida, migrarFeitas, novaDoCaderno, semDataDoCaderno, doCaderno, DURACAO_MAXIMA, duracaoDe, duracaoLimite, duracaoMaxima, ocupadoAs, emConflito, encaixarCompromissos, enviadaPorMim, ehConteudo, ehReuniao, eventosDoDia, horaDe, horaDoSlot, jaTemTarefa, linhasDoBloco, montarGrade, montarSemData, msAteMeiaNoite, separarCompromissos, somenteNoDeQuemRecebeu, type Continua, type Encaixe, rotuloSlot, SLOTS, somarMinutos } from "./grade";
 import { LETRA_PRINCIPAL } from "./fontes";
 import "./caderno.css";
 
@@ -50,6 +51,7 @@ export function TelaTarefas() {
   useEffect(() => () => cancelar.current?.(), []);
 
   const tarefas = useTarefas();
+  const tags = useTags();
   const empresas = useEmpresas();
   const eu = useEu();
   const agendaGoogle = useAgendaEventos();
@@ -60,14 +62,10 @@ export function TelaTarefas() {
   const alheio = !!ver && ver !== eu;
   const { aplicar, selecionadas } = useFiltroEmpresa();
 
-  // Migração única: a chave antiga do navegador vira o campo concluida e some.
+  // Migração única: a chave antiga do navegador vira o campo concluida. B6: só depois de os dados chegarem (eu = carregou), e a lista só perde o que o banco confirmou.
   useEffect(() => {
-    try {
-      const velhas: unknown = JSON.parse(localStorage.getItem("grade:tarefas-feitas") ?? "[]");
-      if (Array.isArray(velhas)) tarefas.filter((t) => velhas.includes(t.id) && !t.concluida).forEach((t) => void salvarTarefa({ ...t, concluida: true }));
-      localStorage.removeItem("grade:tarefas-feitas");
-    } catch {}
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (eu) migrarFeitas(localStorage, tarefas, eu, { salvar: salvarTarefa, marcarFeita }).catch(() => {}); // grade:tarefas-feitas; sem armazenamento ou lista estragada: só não migra
+  }, [eu]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!dia) return <section className="tarefas-tela" aria-busy="true" />;
 
@@ -220,28 +218,29 @@ export function TelaTarefas() {
   const moverPara = (id: string, linha: number) => {
     const t = tarefas.find((x) => x.id === id);
     if (!t) return;
+    if (postProgramado(t)) return avisarFalha(avisoProgramado(t)); // L1: o post sairia no horário antigo
     const h = horaDoSlot(linha);
     // Regra do bloco: não cai em linha ocupada por outra tarefa ou compromisso (as linhas do próprio bloco contam como livres).
     const ini = grade.indexOf(t), fimBloco = ini + (ini >= 0 ? linhasDoBloco(grade, ini) : 0);
     const livre = (j: number) => !grade[j] || (j >= ini && j < fimBloco);
     if (!livre(linha)) return;
-    const quer = t.inicio && t.fim && t.inicio.length > 10 && t.fim.length > 10 ? Math.max(15, minutos(t.fim.slice(11, 16)) - minutos(t.inicio.slice(11, 16))) : 30;
+    const quer = duracaoQuerida(t);
     let cabe = 1;
     while (linha + cabe < SLOTS && livre(linha + cabe)) cabe++;
     const dur = Math.min(quer, Math.max(30, cabe * 30), DURACAO_MAXIMA);
     void salvarTarefa({ ...t, inicio: `${dia}T${h}`, fim: `${dia}T${somarMinutos(h, dur)}`, diaInteiro: false });
   };
   // Mesma hora, um dia depois (sem data: vira dia inteiro no dia seguinte ao que está aberto).
-  const noDiaSeguinte = (t: Tarefa): Tarefa => t.inicio
+  const noDiaSeguinte = <T extends NovaTarefa>(t: T): T => t.inicio
     ? { ...t, inicio: somarDias(t.inicio.slice(0, 10), 1) + t.inicio.slice(10), fim: t.fim && somarDias(t.fim.slice(0, 10), 1) + t.fim.slice(10) }
     : { ...t, inicio: somarDias(dia, 1), diaInteiro: true };
   const comTarefa = (f: (t: Tarefa) => void) => (id: string) => { const t = tarefas.find((x) => x.id === id); if (t) f(t); };
   const acoes: Acoes = {
-    duplicar: comTarefa((t) => void salvarTarefa({ ...noDiaSeguinte(t), id: undefined, concluida: false })),
-    mover: comTarefa((t) => void salvarTarefa(noDiaSeguinte(t))),
+    duplicar: comTarefa((t) => void salvarTarefa(noDiaSeguinte(copiaDoCaderno(t, tarefas, tags)))),
+    mover: comTarefa((t) => (postProgramado(t) ? avisarFalha(avisoProgramado(t)) : void salvarTarefa(noDiaSeguinte(t)))),
     marcarHora: moverPara,
-    duracao: (id: string, min: number) => comTarefa((t) => { const h = horaDe(t); if (h) void salvarTarefa({ ...t, fim: `${t.inicio!.slice(0, 10)}T${somarMinutos(h, min)}` }); })(id),
-    criarPara: (id: string, quem: Responsavel) => comTarefa((t) => void salvarTarefa({ ...t, id: undefined, responsavel: quem, enviarPara: ehConteudo(t) ? undefined : quem, concluida: false }))(id),
+    duracao: (id: string, min: number) => comTarefa((t) => { const h = horaDe(t); if (postProgramado(t)) return avisarFalha(avisoProgramado(t)); if (h) void salvarTarefa({ ...t, fim: `${t.inicio!.slice(0, 10)}T${somarMinutos(h, min)}` }); })(id),
+    criarPara: (id: string, quem: Responsavel) => comTarefa((t) => void salvarTarefa({ ...copiaDoCaderno(t, tarefas, tags), responsavel: quem, enviarPara: ehConteudo(t) ? undefined : quem }))(id),
     marcarPessoa: (id: string, quem: Responsavel) => comTarefa((t) => void salvarTarefa({ ...t, responsavel: quem }))(id),
     corLinha: (id: string, corLinha: CorLinha | undefined) => comTarefa((t) => void salvarTarefa({ ...t, corLinha }))(id),
     etiqueta: (id: string, cor: Etiqueta) => comTarefa((t) => void salvarTarefa({ ...t, cor }))(id),

@@ -91,6 +91,8 @@ export type Tarefa = {
   postagens?: Postagem[];
   /** Só na tela, não vai ao banco: o salvar desta sessão tirou a data (carrossel com vídeo só para o Facebook). Nunca programado não conta. */
   programacaoCancelada?: boolean;
+  /** A1 (040): número de edição do card. O salvar manda o que a tela viu; se o banco já tem outro, recusa (o card mudou). Sem a coluna, undefined. */
+  versao?: number;
   /** Vêm do banco, só leitura. dono = de quem é o caderno; enviadaPor = quem mandou (só se foi enviada). */
   dono?: Responsavel;
   criadoPor?: Responsavel;

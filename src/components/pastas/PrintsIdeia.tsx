@@ -1,22 +1,21 @@
 "use client";
 import { useEffect, useRef, useState, type ClipboardEvent } from "react";
-import { apagarPrint, subirPrint, urlsDosPrints, type Ideia } from "@/lib/dados";
+import { anexarPrints, subirPrint, tirarPrint, urlsDosPrints, type Ideia } from "@/lib/dados";
 
 // Bloco "Prints" da folha (item 300): Ctrl+V de imagem com a folha em foco vira miniatura; clicar amplia (Esc, X ou fora fecham); X tira o print.
 const imagensDe = (e: ClipboardEvent) => [...e.clipboardData.items].flatMap((i) => (i.kind === "file" && i.type.startsWith("image/") ? [i.getAsFile()!] : []));
 
 /** Devolve o que a folha precisa: o que ligar no onPaste do cartão e o bloco para pôr entre Descrição e Links. */
-export function usePrints(ideia: Ideia, aoSalvar: (d: Ideia) => void) {
-  const recente = useRef(ideia);
-  useEffect(() => { recente.current = ideia; });
+export function usePrints(ideia: Ideia) {
   const colar = async (e: ClipboardEvent) => {
     const fotos = imagensDe(e);
     if (!fotos.length) return; // texto colado segue o caminho normal
     e.preventDefault();
     const novos = (await Promise.all(fotos.map((f) => subirPrint(ideia.empresaId, f)))).filter((c): c is string => !!c);
-    if (novos.length) aoSalvar({ ...recente.current, prints: [...recente.current.prints, ...novos] }); // a folha de agora, não a de quando colou
+    // r3 N4: entra na folha como ela está AGORA, e só se ela ainda existe (apagada no meio do envio: o arquivo sai do armário)
+    if (novos.length) await anexarPrints(ideia.empresaId, ideia.id, novos);
   };
-  return { colar, bloco: <Prints ideia={ideia} aoTirar={(c) => { apagarPrint(c); aoSalvar({ ...recente.current, prints: recente.current.prints.filter((x) => x !== c) }); }} /> };
+  return { colar, bloco: <Prints ideia={ideia} aoTirar={(c) => void tirarPrint(ideia.empresaId, ideia, c)} /> }; // M21: o arquivo só sai depois de o banco confirmar
 }
 
 function Prints({ ideia, aoTirar }: { ideia: Ideia; aoTirar: (caminho: string) => void }) {

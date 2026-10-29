@@ -54,8 +54,12 @@ export const lerPeriodo = (de: string, ate: string) => periodos.get(chave(de, at
 export const lerAusente = () => ausente;
 
 /** Lê do banco o calendário de `de` a `ate` (inclusive). Falhou: mantém o que está na tela. */
+const vez = new Map<string, number>(); // B11: última leitura pedida por período; resposta de uma anterior que chega depois é descartada
 export async function carregar(de: string, ate: string) {
+  const n = (vez.get(chave(de, ate)) ?? 0) + 1;
+  vez.set(chave(de, ate), n);
   const { data, error } = await supabase().rpc("postagens_calendario", { p_de: de, p_ate: ate });
+  if (vez.get(chave(de, ate)) !== n) return;
   if (error) {
     if (funcaoAusente(error) && !ausente) { ausente = true; avisar(); }
     return;

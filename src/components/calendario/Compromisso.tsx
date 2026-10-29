@@ -10,9 +10,12 @@ import { diaCurto, eventoNoTopo, horaCurta, nomeSemana } from "./logica";
 // na agenda da contato@. Reunião ganha o mesmo âmbar com brilho das reuniões do item 188.
 
 export const nomeAgenda = (f: FonteAgenda) => (f === "contato" ? "Equipe" : ROTULO_AGENDA[f]);
+/** Foto da agenda: a da pessoa dona (a pessoal do Adrian leva a foto dele, M15); contato não tem pessoa. */
+export const pessoaDaAgenda = (f: FonteAgenda): Responsavel | null => (f === "contato" ? null : f === "adrian_pessoal" ? "adrian" : f);
 
 export function MarcaAgenda({ fonte, tamanho }: { fonte: FonteAgenda; tamanho: number }) {
-  return fonte === "contato" ? <span className="cal-equipe">Equipe</span> : <Pessoa quem={fonte as Responsavel} tamanho={tamanho} />;
+  const quem = pessoaDaAgenda(fonte);
+  return quem ? <Pessoa quem={quem} tamanho={tamanho} /> : <span className="cal-equipe">Equipe</span>;
 }
 
 /** Hora no bloco: "14:00" (curto) ou "14:00 às 15:00"; o que passa de um dia para outro diz até quando. */

@@ -26,7 +26,8 @@ const nomes: Record<Etapa, string> = {
 };
 
 type Arraste = { id: string; x: number; y: number; w: number; h: number };
-const semAviso = () => () => {};
+// B12: confere o dia a cada minuto (só re-desenha quando o texto muda), para a aba aberta de um dia para o outro virar o "hoje"
+const aCadaMinuto = (f: () => void) => { const i = setInterval(f, 60_000); return () => clearInterval(i); };
 const hojeTexto = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 const diaNumero = (texto: string) => { const [a, m, d] = texto.split("-").map(Number); return Date.UTC(a, m - 1, d) / 86_400_000; };
 
@@ -70,7 +71,7 @@ export function TelaConteudos() {
   const [pendentePostado, setPendentePostado] = useState<Tarefa | null>(null);
   const pegada = useRef<{ id: string; px: number; py: number; caixa: DOMRect; ativo: boolean } | null>(null);
   const quadro = useRef<HTMLDivElement>(null);
-  const hoje = useSyncExternalStore(semAviso, hojeTexto, () => ""); // servidor: "" até hidratar (fuso)
+  const hoje = useSyncExternalStore(aCadaMinuto, hojeTexto, () => ""); // servidor: "" até hidratar (fuso)
   const [erro, setErro] = useState("");
   const conteudos = aplicar(tarefas).filter((t): t is Tarefa & { etapa: Etapa } => ehConteudo(t));
   const nomesEmpresas = new Map(empresas.map((e) => [e.id, e.nome]));
@@ -240,7 +241,8 @@ export function TelaConteudos() {
           );
         })}
       </div>
-      {aberta && <Ficha tarefa={aberta} tipos={["roteiro", "gravacao", "edicao", "postagem"]} aoFechar={() => setAberta(null)} soLer={!!aberta.id && !podeAlterar(aberta as Tarefa, eu)} />}
+      {/* r3 (Ferreiro 1): key = o card. Trocar de card com a ficha aberta montava a ficha nova com o rascunho da velha */}
+      {aberta && <Ficha key={aberta.id ?? "nova"} tarefa={aberta} tipos={["roteiro", "gravacao", "edicao", "postagem"]} aoFechar={() => setAberta(null)} soLer={!!aberta.id && !podeAlterar(aberta as Tarefa, eu)} />}
       {pendentePostado && <ConfirmarPostado titulo={pendentePostado.titulo} aoCancelar={() => setPendentePostado(null)} aoConfirmar={() => {
         void mudarEtapa(pendentePostado, "postado");
         setPendentePostado(null);

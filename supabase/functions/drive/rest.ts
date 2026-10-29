@@ -7,6 +7,11 @@ export class ErroRest extends Error {
     super(`banco ${status}${codigo ? ` ${codigo}` : ""}`);
   }
 }
+/** Para `.catch` de rpc: função que o banco ainda não tem (SQL novo não colado, PGRST202) vira `undefined`; o resto sobe. */
+export const semFuncao = (e: unknown): undefined => {
+  if (e instanceof ErroRest && e.codigo === "PGRST202") return undefined;
+  throw e;
+};
 
 export type Rest = ReturnType<typeof criarRest>;
 

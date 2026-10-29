@@ -8,12 +8,11 @@
 // - Só a You está ligada: em outra empresa fica só o aviso.
 import { useState } from "react";
 import { REDES_POST, postarAgora, tentarDeNovo, descartarEnvio, haQuanto, liberarPendente, relerPendentes, useEnvios, useEu, usePendentes, usePostagemAutomatica, videoPendente, type NovaTarefa, type RedePost, type Tarefa } from "@/lib/dados";
-import { paraDia, paraHora } from "@/components/calendario/logica";
 import { CampoData } from "@/components/ui/CampoData";
 import Image from "next/image";
 import { podeAprovar } from "./Aprovacao";
 import { Confirmar } from "./Confirmar";
-import { CANCELADA, NOME_REDE, SO_FACEBOOK, carrosselComVideo, carrosselSoFacebook, faltaParaPostar, programacaoCancelada, redesDe, quandoPostou, redesValidas, situacao, textoRedes, textosPublicacao, comoHoraMarcada } from "./postagem";
+import { CANCELADA, NOME_REDE, SO_FACEBOOK, carrosselComVideo, carrosselSoFacebook, faltaParaPostar, programacaoCancelada, redesDe, quandoPostou, redesValidas, situacao, textoRedes, textosPublicacao, SO_YOU, hojeEmBrasilia, jaPassou, JA_POSTADO, jaPostadoEm } from "./postagem";
 
 type Props = {
   salvo: Tarefa; rascunho: NovaTarefa;
@@ -67,6 +66,7 @@ export function Publicacao({ salvo, rascunho, mudar, gravar }: Props) {
   const redes = clicadas ?? (jaProgramado ? redesDe(rascunho) : []);
   const soInstagram = carrosselComVideo(rascunho, rascunho.formato);
   const valem = redesValidas(rascunho, rascunho.formato, redes);
+  const repetido = jaPostadoEm(salvo, valem); // r4 F2 (b): já saiu em todas as redes escolhidas; acender uma rede sem post libera
   // O que ainda não subiu não está guardado: a função não acharia.
   const checar = (extra: string[] = []) => {
     const f = [...faltaParaPostar(rascunho, rascunho.formato, valem), ...(rascunho.arquivos.some((a) => a.pendente) ? ["Salve a ficha antes: há arquivo que ainda não subiu."] : []), ...(subindo ? [SUBINDO] : []), ...extra];
@@ -74,9 +74,11 @@ export function Publicacao({ salvo, rascunho, mudar, gravar }: Props) {
     return !f.length;
   };
   const programar = () => {
-    if (checar(!quando ? ["Escolha a data e a hora."] : quando < paraHora(new Date()) ? ["Escolha um horário que ainda não passou."] : [])) void gravar({ postarRedes: valem, postarEm: quando });
+    if (checar(!quando ? ["Escolha a data e a hora."] : jaPassou(quando) ? ["Escolha um horário que ainda não passou."] : [])) void gravar({ postarRedes: valem, postarEm: quando });
   };
-  const tentar = async () => { if (checar() && (await gravar({ postarRedes: valem }))) void tentarDeNovo(salvo.id); };
+  // r2 B1 (contrato do 037 com o Bussola): tentar de novo vai na data escolhida aqui (passada = na hora; futura = na hora marcada).
+  // O banco não inventa mais a data; card que perdeu a programação mostra o campo de data também.
+  const tentar = async () => { if (checar(!quando ? ["Escolha a data e a hora."] : []) && (await gravar({ postarRedes: valem, postarEm: quando }))) void tentarDeNovo(salvo.id); };
   const txt = textosPublicacao(ligada, !!salvo.postarEm, teste);
   // Achado 5: a confirmação reconfere (a tela e o banco) antes de gravar e mandar postar; o banco também recusa sozinho.
   const postar = async () => {
@@ -89,7 +91,7 @@ export function Publicacao({ salvo, rascunho, mudar, gravar }: Props) {
   return (
     // Título como os outros da ficha (Capa do Reels, Notas) e a caixa embaixo, na mesma margem dos campos (item 210)
     <fieldset className="ficha-campo publicacao"><legend>Publicação</legend><div className="publicacao-caixa">
-      {salvo.empresaId !== "you" ? <p className="ficha-dica ficha-dica-fica">{comoHoraMarcada("Postagem automática só para a You (por enquanto).", ligada)}</p> : <>
+      {salvo.empresaId !== "you" ? <p className="ficha-dica ficha-dica-fica" role="note">{SO_YOU}</p> : <>
         {sit?.tipo === "postando" && <p className="aprovacao-situacao" data-tipo="postando" role="status">Postando…</p>}
         {subindo && <div className="aprovacao-erro" role="alert"><p><strong>Vídeo novo não subiu.</strong> A postagem está bloqueada para não sair o vídeo sem legenda{desde ? ` (desde ${haQuanto(desde)})` : ""}.{!aprova && " Suba o vídeo de novo, ou peça a quem aprova para liberar."}</p>
           {aprova && <button type="button" className="aprovacao-botao" data-acao="liberar" onClick={() => { setRecusaLiberar(""); setLiberando(true); }}>Postar com o vídeo atual</button>}
@@ -124,19 +126,22 @@ export function Publicacao({ salvo, rascunho, mudar, gravar }: Props) {
             {soInstagram && <small className="aprovacao-nota">Carrossel com vídeo vai só para o Instagram: o Facebook não aceita foto e vídeo no mesmo post.</small>}
           </div>
           {sit?.tipo === "erro" ? (
-            // Com erro, o caminho é "Tentar de novo" (019: postar_agora não mexe em rede que deu erro); as redes acima valem para a nova tentativa.
+            // Com erro, o caminho é "Tentar de novo" (019: postar_agora não mexe em rede que deu erro); as redes e a data acima valem para a nova tentativa.
             <div className="publicacao-acoes">
+              <CampoData rotulo="Data e hora do post" valor={quando.slice(0, 10)} hora={quando.slice(11, 16)} semLimpar vazio="Quando?" anoCurto
+                aoMudar={(dia, hora) => setQuando(dia ? `${dia}T${hora || "00:00"}` : "")} />
               <button type="button" className="aprovacao-botao" data-acao="tentar" onClick={() => void tentar()}>
                 {sit.incerto ? "Já olhei o perfil: tentar de novo" : sit.saiu && sit.refazer.length === 1 ? `Tentar de novo só no ${NOME_REDE[sit.refazer[0]]}` : "Tentar de novo"}
               </button>
             </div>
           ) : (
+            <>{repetido && <p className="aprovacao-nota" role="note">{JA_POSTADO}</p>}
             <div className="publicacao-acoes" data-botoes={txt.postarAgora ? 3 : 2}>
-              <CampoData rotulo="Data e hora do post" valor={quando.slice(0, 10)} hora={quando.slice(11, 16)} min={paraDia(new Date())} semLimpar vazio="Quando?" anoCurto
+              <CampoData rotulo="Data e hora do post" valor={quando.slice(0, 10)} hora={quando.slice(11, 16)} min={hojeEmBrasilia()} semLimpar vazio="Quando?" anoCurto
                 aoMudar={(dia, hora) => setQuando(dia ? `${dia}T${hora || "00:00"}` : "")} />
-              <button type="button" className="aprovacao-botao" data-acao={salvo.postarEm ? "reprogramar" : "aprovar"} onClick={programar}>{txt.marcar}</button>
-              {txt.postarAgora && <button type="button" className="aprovacao-botao" data-acao="postar" onClick={() => { if (checar()) setConfirmando(true); }}>Postar agora</button>}
-            </div>
+              <button type="button" className="aprovacao-botao" data-acao={salvo.postarEm ? "reprogramar" : "aprovar"} disabled={repetido} onClick={programar}>{txt.marcar}</button>
+              {txt.postarAgora && <button type="button" className="aprovacao-botao" data-acao="postar" disabled={repetido} onClick={() => { if (checar()) setConfirmando(true); }}>Postar agora</button>}
+            </div></>
           )}
           {falta.length > 0 && <ul className="aprovacao-falta" role="alert">{falta.map((f) => <li key={f}>{f}</li>)}</ul>}
         </>}

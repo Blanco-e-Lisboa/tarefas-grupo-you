@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EventoAgenda, Tarefa } from "@/lib/dados";
-import { agendaPorDia, andar, semanaDoAno, diasCobertos, eventoNoTopo, ultimoDia, diasDoMes, empilhar, esperarFimDoArraste, faixas, inicioSemana, mover, paraDia, tituloPeriodo, vaiProGoogle } from "./logica";
+import { agendaPorDia, andar, semanaDoAno, diasCobertos, eventoNoTopo, ultimoDia, diasDoMes, empilhar, esperarFimDoArraste, faixas, inicioSemana, mover, paraDia, tituloPeriodo, vaiProGoogle, postProgramado, avisoProgramado } from "./logica";
 
 const base: Tarefa = {
   id: "x", titulo: "Gravar", tipo: "gravacao", empresaId: "beec", responsavel: "matheus",
@@ -104,5 +104,15 @@ describe("calendário", () => {
     expect(vaiProGoogle(m("natham"), false, "natham")).toBe(false); // sem data
     expect(vaiProGoogle(m("natham", false), true, "natham")).toBe(false); // criada no Caderno
     expect(vaiProGoogle(m("natham"), true, null)).toBe(false);
+  });
+});
+
+describe("A9: card programado não muda de dia por arraste", () => {
+  const base = { id: "p", titulo: "Reels", tipo: "postagem", empresaId: "you", responsavel: "matheus", diaInteiro: false, cor: "etiqueta-1", links: [], arquivos: [] } as Tarefa;
+  it("só Aprovado com data do post conta como programado", () => {
+    expect(postProgramado({ ...base, etapa: "aprovado", postarEm: "2026-10-30T18:00" })).toBe(true);
+    expect(postProgramado({ ...base, etapa: "aprovado" })).toBe(false);
+    expect(postProgramado({ ...base, etapa: "postado", postarEm: "2026-10-30T18:00" })).toBe(false);
+    expect(avisoProgramado({ postarEm: "2026-10-30T18:00" })).toContain("30/10 às 18:00");
   });
 });

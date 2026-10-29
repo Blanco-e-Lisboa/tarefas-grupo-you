@@ -5,21 +5,23 @@ export const EVENTO_FICHA = "grade:ficha";
 
 // 268: o aviso de envio interrompido leva a /conteudos?ficha=<id>. Abre a ficha desse card ao carregar a tela (vindo de outra) ou
 // quando o aviso avisa (já estando nela, o endereço muda mas a tela não recarrega), e limpa o endereço.
+// r3 (Ferreiro 1): o endereço é lido UMA vez, ao abrir a tela, e o pedido vale até o card chegar. Antes, toda mudança na contagem de cards
+// relia o endereço e reabria o card dele, até por cima de outra ficha aberta (a ficha misturava dois cards).
 export function useFichaDaUrl(tarefas: Tarefa[], abrir: (t: Tarefa) => void) {
-  const vivas = useRef(tarefas);
-  useEffect(() => { vivas.current = tarefas; }); // antes do efeito abaixo: a ordem dos efeitos é a da escrita
+  const pedido = useRef<string | null | undefined>(undefined); // undefined = ainda não leu o endereço; null = nada pedido (ou já abriu)
   useEffect(() => {
-    const tenta = (id: string | null | undefined) => {
-      const t = id ? vivas.current.find((x) => x.id === id) : undefined;
-      if (!t) return false;
-      window.history.replaceState(null, "", window.location.pathname);
-      abrir(t);
-      return true;
-    };
-    const daUrl = () => tenta(new URLSearchParams(window.location.search).get("ficha"));
-    const aoAvisar = (e: Event) => void tenta((e as CustomEvent<string>).detail);
-    daUrl();
+    if (pedido.current === undefined) {
+      pedido.current = new URLSearchParams(window.location.search).get("ficha");
+      if (pedido.current) window.history.replaceState(null, "", window.location.pathname);
+    }
+    const t = pedido.current ? tarefas.find((x) => x.id === pedido.current) : undefined;
+    if (t) { pedido.current = null; abrir(t); }
+  }, [tarefas, abrir]);
+  const vivas = useRef(tarefas);
+  useEffect(() => { vivas.current = tarefas; });
+  useEffect(() => {
+    const aoAvisar = (e: Event) => { const t = vivas.current.find((x) => x.id === (e as CustomEvent<string>).detail); if (t) abrir(t); };
     window.addEventListener(EVENTO_FICHA, aoAvisar);
     return () => window.removeEventListener(EVENTO_FICHA, aoAvisar);
-  }, [tarefas.length, abrir]);
+  }, [abrir]);
 }

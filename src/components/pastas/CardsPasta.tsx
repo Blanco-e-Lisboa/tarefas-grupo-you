@@ -14,6 +14,8 @@ export function CardNome({ titulo, coisa, botao, inicial = "", comPermanente, em
 }) {
   const [erro, setErro] = useState("");
   const [permanente, setPermanente] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const indo = useRef(false); // B15: trava já no clique (o `salvando` só desliga o botão no próximo desenho); dois cliques criavam duas pastas
   const campo = useRef<HTMLInputElement>(null);
   // o <dialog> só abre depois deste efeito e leva o foco para o X: o foco no campo vem em seguida
   useEffect(() => {
@@ -25,7 +27,10 @@ export function CardNome({ titulo, coisa, botao, inicial = "", comPermanente, em
     const n = String(new FormData(e.currentTarget).get("nome")).trim();
     if (!n) return setErro(`Escreva um nome para ${coisa === "pasta" ? "a pasta" : "o tema"}.`);
     if (emUso(n)) return setErro(`Já existe ${coisa === "pasta" ? "uma pasta" : "um tema"} com esse nome nesta empresa.`);
-    Promise.resolve(aoSalvar(n, permanente)).catch((x: unknown) => setErro(mensagem(x, "Não consegui salvar.")));
+    if (indo.current) return;
+    indo.current = true;
+    setSalvando(true);
+    Promise.resolve(aoSalvar(n, permanente)).catch((x: unknown) => setErro(mensagem(x, "Não consegui salvar."))).finally(() => { indo.current = false; setSalvando(false); });
   };
   return (
     <CardFlutuante titulo={titulo} aoFechar={aoFechar}>
@@ -39,7 +44,7 @@ export function CardNome({ titulo, coisa, botao, inicial = "", comPermanente, em
           </label>
         )}
         {erro && <p className="pasta-erro" role="alert">{erro}</p>}
-        <button type="submit" className="btn">{botao}</button>
+        <button type="submit" className="btn" disabled={salvando}>{salvando ? "Salvando..." : botao}</button>
       </form>
     </CardFlutuante>
   );

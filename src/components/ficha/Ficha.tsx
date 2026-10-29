@@ -157,16 +157,16 @@ export function Ficha({ tarefa, aoFechar, aoSalvar, soLer, tipos = TIPOS }: {
     });
     const salva = { ...(aprovadorTravado ? { ...pronta, aprovador: tarefa.aprovador } : pronta), ...extra }; // só Natham, Matheus ou quem aprova muda o aprovador (015, 223), mesmo tirando a tag
     const gravada = await salvarTarefa(salva);
-    gravando.current = false;
-    setSalvando(false);
     if (gravada) {
-      setT((x) => ({ ...x, ...extra, id: gravada.id, etapa: gravada.etapa, conserto: gravada.conserto, consertoTexto: gravada.consertoTexto, tags: gravada.tags })); // etapa como ficou (Roteiro do 205, decisão)
+      setT((x) => ({ ...x, ...extra, id: gravada.id, etapa: gravada.etapa, conserto: gravada.conserto, consertoTexto: gravada.consertoTexto, tags: gravada.tags, versao: gravada.versao })); // etapa como ficou (Roteiro do 205, decisão); A1: a versão que este salvar deixou
       aoSalvar?.(salva);
       saida.salvou();
     }
     // 229: a pasta do conteúdo no Drive acompanha título, formato, tema e empresa. Se o Drive falhar, a ficha fica aberta com o aviso (o salvar vale).
     const aviso = gravada && viva && arquivosDoDrive(viva).length && mudouPasta(tarefa, salva)
       ? await organizarCard(gravada.id).then(() => "", (e) => `Salvo, mas a pasta no Drive não mudou: ${e instanceof Error ? e.message : "salve de novo."}`) : "";
+    gravando.current = false; // r4 N3: os campos só voltam depois do Drive (organizarCard); antes, o texto digitado nessa espera se perdia
+    setSalvando(false);
     if (aviso) setRecusa(aviso);
     if (fechar && !aviso) setEnviou(true);
     return !!gravada && !lerErro();
@@ -213,10 +213,11 @@ export function Ficha({ tarefa, aoFechar, aoSalvar, soLer, tipos = TIPOS }: {
             {!nova && <Agora tarefaId={tarefa.id!} soLer={soLer} encerrada={viva?.tipo === "postagem" && (viva.etapa === "aprovado" || viva.etapa === "postado")} nomes={NOMES.responsavel} />}
             <button type="button" className="ficha-fechar" onClick={saida.pedir}>Fechar</button>
           </div>
-          <TituloFicha valor={t.titulo} aoMudar={(v) => mudar("titulo", v)} soLer={!!soLer} />
+          <TituloFicha valor={t.titulo} aoMudar={(v) => mudar("titulo", v)} soLer={!!soLer || salvando} />
         </header>
 
-        <fieldset className="ficha-corpo" disabled={soLer}>
+        {/* r3 N3: enquanto grava, os campos travam. O que ia para o banco é o que estava na hora do clique; digitar no meio ficava só na tela e se perdia ao fechar */}
+        <fieldset className="ficha-corpo" disabled={soLer || salvando}>
           <div className="ficha-grade">
             <div className="ficha-campo ficha-escolha">
               <Selecao rotulo="Tipo" opcoes={tipos.map((v) => ({ valor: v, rotulo: NOMES.tipo[v] }))} valor={[t.tipo]} multipla={false} aoMudar={([v]) => { if (v) mudar("tipo", v as TipoTarefa); }} />
@@ -272,7 +273,7 @@ export function Ficha({ tarefa, aoFechar, aoSalvar, soLer, tipos = TIPOS }: {
           <TagsFicha t={t} mudar={mudar} pedeAprovador={pedeAprovador} aprovadorTravado={aprovadorTravado} />
 
           <LinksDrive links={links} aoMudar={setLinks} />
-          <div className="ficha-anexos-trava" data-travada={postTravado || undefined}><Anexos valor={arquivos.filter((a) => !fora.includes(a))} aoMudar={(v) => setArquivos([...v, ...fora])} empresaId={t.empresaId} tarefaId={t.id} carrossel={t.formato === "carrossel"} /></div>
+          <div className="ficha-anexos-trava" data-travada={postTravado || undefined}><Anexos valor={arquivos.filter((a) => !fora.includes(a))} aoMudar={(v) => setArquivos([...v, ...fora])} empresaId={t.empresaId} carrossel={t.formato === "carrossel"} /></div>
           {viva && <PrazoDrive t={viva} />}
           <AvisosVideo arquivos={arquivos} viva={viva} travado={postTravado} />
 

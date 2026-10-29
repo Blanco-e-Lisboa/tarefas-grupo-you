@@ -2,7 +2,7 @@
 // A regra "o Matheus liga mas não desliga" é do BANCO (definir_permanente, 019 v2): aqui o banco falso a repete para provar que a função obedece à recusa dele.
 import { describe, expect, it } from "vitest";
 import { enviarEmPartes } from "../../../src/lib/dados/drive";
-import { BASE_FALSA, criarGoogleFalso } from "../_shared/google-falso.ts";
+import { BASE_FALSA, criarGoogleFalso, videoFalso } from "../_shared/google-falso.ts";
 import { criarGoogle } from "../_shared/google.ts";
 import { criarManipulador } from "./acoes.ts";
 import { criarDriveApi } from "./drive-api.ts";
@@ -73,7 +73,7 @@ function montar() {
 }
 type M = ReturnType<typeof montar>;
 
-async function anexar(m: M, bytes = new Uint8Array(6), tarefa = "t1", nome = "reels.mp4") {
+async function anexar(m: M, bytes = videoFalso(6), tarefa = "t1", nome = "reels.mp4") {
   const s = await lerJson(await m.chamar({ acao: "sessao_envio", tarefa_id: tarefa, nome, tipo: "video", mime: "video/mp4", tamanho: bytes.length, papel: "anexo" }));
   const driveId = await enviarEmPartes(s.sessao_url, new Blob([bytes as BlobPart]), undefined, m.g.fetch, 4);
   const r = await m.chamar({ acao: "confirmar_envio", tarefa_id: tarefa, drive_id: driveId, nome, tipo: "video", tamanho: bytes.length, papel: "anexo", ordem: 0 });
@@ -97,7 +97,7 @@ describe("229: árvore Empresa → Formato → Tema → conteúdo", () => {
     const tema = await criarTema(m, "Reunião de outubro");
     Object.assign(m.t.tarefas[0], { ocasiao_id: tema.id });
     await anexar(m);
-    await anexar(m, new Uint8Array(3), "t1", "outro.mp4");
+    await anexar(m, videoFalso(3), "t1", "outro.mp4");
     expect(m.arvore()).toContain("Tarefas · Conteúdos/You/Reels/Reunião de outubro/Reels Reunião de outubro - Bastidores da You");
     expect(m.arvore()).toHaveLength(5);
   });
@@ -127,7 +127,7 @@ describe("229: árvore Empresa → Formato → Tema → conteúdo", () => {
     await anexar(m);
     const velha = String(m.t.drive_pastas.find((x) => x.chave === "card:t1")!.drive_id);
     m.g.estado.arquivos.get(velha)!.trashed = true;
-    await anexar(m, new Uint8Array(2), "t1", "novo.mp4");
+    await anexar(m, videoFalso(2), "t1", "novo.mp4");
     expect(m.t.drive_pastas.find((x) => x.chave === "card:t1")!.drive_id).not.toBe(velha);
   });
   it("renomear o tema renomeia a pasta do tema em cada formato e as pastas dos conteúdos", async () => {
@@ -135,7 +135,7 @@ describe("229: árvore Empresa → Formato → Tema → conteúdo", () => {
     const tema = await criarTema(m, "Natal");
     Object.assign(m.t.tarefas[0], { ocasiao_id: tema.id });
     m.t.tarefas.push({ id: "t2", titulo: "Dica", empresa_id: "you", ocasiao_id: tema.id, etapa: "edicao", formato: "post" });
-    await anexar(m); await anexar(m, new Uint8Array(3), "t2", "d.mp4");
+    await anexar(m); await anexar(m, videoFalso(3), "t2", "d.mp4");
     await m.chamar({ acao: "renomear_ocasiao", ocasiao_id: tema.id, nome: "Natal 2026" });
     expect(m.arvore()).toEqual(expect.arrayContaining([
       "Tarefas · Conteúdos/You/Reels/Natal 2026/Reels Natal 2026 - Bastidores da You",
@@ -222,7 +222,7 @@ describe("229: os 7 dias e o Permanente", () => {
     m.t.tarefas.push({ id: "t2", titulo: "Já limpo", empresa_id: "you", ocasiao_id: tema.id, etapa: "postado", formato: "reels" }); // postado sem arquivo
     m.t.tarefas.push({ id: "t3", titulo: "Em edição", empresa_id: "you", ocasiao_id: tema.id, etapa: "edicao", formato: "reels" });
     await postado(m, tema);
-    await anexar(m, new Uint8Array(2), "t3", "x.mp4");
+    await anexar(m, videoFalso(2), "t3", "x.mp4");
     const r = await lerJson(await m.chamar({ acao: "permanente_ocasiao", ocasiao_id: tema.id, ligado: false }));
     expect(r.rearmados).toBe(1);
     expect(m.alarmes).toEqual([{ tipo: "armar", tarefa: "t1", minutos: 10080 }]);
@@ -298,7 +298,7 @@ describe("229: documento direto na pasta de um Tema (sem card)", () => {
     expect((await m.chamar({ acao: "sessao_envio_pasta", empresa_id: "you", nome: "a.pdf", tipo: "documento", tamanho: 1 }, "tok-ninguem")).status).toBe(401);
     const destino = { empresa_id: "you" };
     const s = await lerJson(await m.chamar({ acao: "sessao_envio_pasta", ...destino, nome: "a.pdf", tipo: "documento", mime: "application/pdf", tamanho: 8 }));
-    const id = await enviarEmPartes(s.sessao_url, new Blob([new Uint8Array(8)]), undefined, m.g.fetch, 4);
+    const id = await enviarEmPartes(s.sessao_url, new Blob([videoFalso(8)]), undefined, m.g.fetch, 4);
     const r = await m.chamar({ acao: "confirmar_envio_pasta", ...destino, drive_id: id, nome: "a.pdf", tipo: "documento", tamanho: 9 });
     expect(r.status).toBe(422);
     expect(m.g.estado.arquivos.get(id)!.trashed).toBe(true);
@@ -358,7 +358,7 @@ describe("236: achados da Lupa no 229", () => {
     for (let i = 1; i <= 45; i++) {
       const id = `c${String(i).padStart(2, "0")}`;
       m.t.tarefas.push({ id, titulo: `Card ${i}`, empresa_id: "you", ocasiao_id: tema.id, etapa: "edicao", formato: "post" });
-      await anexar(m, new Uint8Array(2), id, `a${i}.mp4`);
+      await anexar(m, videoFalso(2), id, `a${i}.mp4`);
     }
     m.t.tarefas.push({ id: "sem-pasta", titulo: "Sem arquivo", empresa_id: "you", ocasiao_id: tema.id, etapa: "edicao", formato: "post" }); // não tem pasta: não conta
     const velhos = () => m.arvore().filter((p) => p.includes("Post Natal - ")).length;
@@ -379,7 +379,7 @@ describe("236: achados da Lupa no 229", () => {
     for (let i = 1; i <= 42; i++) {
       const id = `d${String(i).padStart(2, "0")}`;
       m.t.tarefas.push({ id, titulo: `Card ${i}`, empresa_id: "you", ocasiao_id: tema.id, etapa: "edicao", formato: "post" });
-      await anexar(m, new Uint8Array(2), id, `a${i}.mp4`);
+      await anexar(m, videoFalso(2), id, `a${i}.mp4`);
     }
     let cursor: string | undefined, voltas = 0;
     do {
@@ -389,14 +389,17 @@ describe("236: achados da Lupa no 229", () => {
     expect(voltas).toBe(2);
     expect(m.arvore().filter((p) => p.includes("Post Novo - "))).toHaveLength(42);
   });
-  it("6 médio: criar Tema JÁ Permanente obedece a regra de quem liga: Adrian (login sem ser Natham/Matheus) é recusado, nada é criado", async () => {
+  it("B2 (pente fino r1, decisão do Natham): só Natham e Matheus criam e renomeiam Tema; Adrian é recusado e nada muda", async () => {
     const m = montar();
     const r = await m.chamar({ acao: "criar_ocasiao", empresa_id: "you", nome: "Escondido", permanente: true }, "tok-adrian");
     expect(r.status).toBe(403);
-    expect((await lerJson(r)).erro).toBe("Só o Natham ou o Matheus ligam o Permanente.");
+    expect((await lerJson(r)).erro).toBe("Só o Natham ou o Matheus criam e renomeiam temas.");
+    expect((await m.chamar({ acao: "criar_ocasiao", empresa_id: "you", nome: "Comum" }, "tok-adrian")).status).toBe(403);
     expect(m.t.ocasioes).toHaveLength(0);
-    expect((await m.chamar({ acao: "criar_ocasiao", empresa_id: "you", nome: "Comum" }, "tok-adrian")).status).toBe(200); // criar desligado continua valendo
-    expect((await criarTema(m, "Do Matheus", { permanente: true }, "tok-matheus")).permanente).toBe(true);
+    const tema = await criarTema(m, "Do Matheus", { permanente: true }, "tok-matheus");
+    expect(tema.permanente).toBe(true);
+    expect((await m.chamar({ acao: "renomear_ocasiao", ocasiao_id: tema.id, nome: "Outro" }, "tok-adrian")).status).toBe(403);
+    expect(m.t.ocasioes[0].nome).toBe("Do Matheus");
   });
   it("6 médio: documento solto só para Natham e Matheus (Adrian com login é recusado)", async () => {
     const m = montar();

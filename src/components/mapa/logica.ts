@@ -4,6 +4,9 @@ import { deTexto, paraDia, somarDias } from "@/components/calendario/logica";
 import { diasDeAtraso, quandoDe } from "@/lib/atraso";
 import { ehConteudo, montarGrade } from "@/components/tarefas/grade";
 
+/** L6: assinatura do "hoje" do Mapa: confere o dia a cada minuto (só re-desenha quando o texto muda), para a aba aberta virar à meia-noite. */
+export const aCadaMinuto = (avisar: () => void) => { const i = setInterval(avisar, 60_000); return () => clearInterval(i); };
+
 /** Hoje pelo relógio do navegador, em data local (nunca toISOString: em UTC viraria o dia errado à noite no Brasil). */
 export const hoje = (agora = new Date()) => paraDia(agora);
 

@@ -24,12 +24,8 @@ export async function proxy(request: NextRequest) {
     para.search = "";
     return NextResponse.redirect(para);
   }
-  if (data?.claims && caminho === "/entrar") {
-    const para = request.nextUrl.clone();
-    para.pathname = "/";
-    para.search = "";
-    return NextResponse.redirect(para);
-  }
+  // r2 B9: quem já está logado e abre /entrar NÃO é mandado para "/" aqui: o porteiro não vê o "#access_token=..." do convite (o navegador
+  // não manda essa parte ao servidor), e o convite aberto num navegador com outra pessoa logada se perdia. A tela de entrar decide (TelaEntrar).
   return resposta;
 }
 

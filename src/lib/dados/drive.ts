@@ -4,9 +4,8 @@ import { useSyncExternalStore } from "react";
 import { supabase } from "@/lib/supabase/cliente";
 import { AVISOS, ligarTempoReal } from "./tempo-real";
 import type { Arquivo, Formato } from "./tipos";
-
-const PARTE = 8 * 1024 * 1024; // múltiplo de 256 KB, como o Drive exige
-const TENTATIVAS = 3;
+import { enviarEmPartes, ondeParou } from "./envio-em-partes";
+export { enviarEmPartes };
 
 const base = () => process.env.NEXT_PUBLIC_SUPABASE_URL!;
 async function cabecalho() {
@@ -31,48 +30,10 @@ export class ErroServidor extends Error {
     super(mensagem);
   }
 }
+/** r2 B6: recusa que tentar de novo não resolve (o servidor respondeu 4xx). 408 e 429 (demorou, muitos pedidos) ainda valem nova tentativa. */
+export const recusaDefinitiva = (e: unknown) => e instanceof ErroServidor && e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429;
 
 export const tipoDe = (f: { type: string }): NonNullable<Arquivo["tipo"]> => (f.type.startsWith("video/") ? "video" : f.type.startsWith("image/") ? "imagem" : "documento");
-
-/** O que o Drive respondeu a uma parte: acabou (com o id), ou até onde já recebeu. */
-type Retorno = { id: string } | { recebido: number };
-async function lerRetorno(r: Response): Promise<Retorno> {
-  if (r.status === 200 || r.status === 201) return { id: ((await r.json()) as { id: string }).id };
-  const faixa = /bytes=0-(\d+)/.exec(r.headers.get("range") ?? ""); // sem Range = nada recebido ainda
-  return { recebido: faixa ? Number(faixa[1]) + 1 : 0 };
-}
-/** Pergunta ao Drive até onde a sessão já recebeu (depois de uma parte que falhou). Se o último pedaço já tinha chegado, devolve o id. */
-async function ondeParou(sessao: string, total: number, buscar: typeof fetch): Promise<Retorno> {
-  const r = await buscar(sessao, { method: "PUT", headers: { "content-range": `bytes */${total}` } });
-  if (r.status !== 200 && r.status !== 201 && r.status !== 308) throw new Error(`Drive ${r.status}`);
-  return lerRetorno(r);
-}
-
-/** Manda o arquivo em partes de 8 MB para o endereço da sessão; refaz a parte que falhou (até 3 vezes) e segue o Range que o Drive devolve. Devolve o id do arquivo no Drive. */
-export async function enviarEmPartes(sessao: string, arquivo: Blob, aoProgredir?: (fracao: number) => void, buscar: typeof fetch = (...a) => fetch(...a), parte = PARTE, desde = 0): Promise<string> {
-  const total = arquivo.size;
-  let inicio = desde, falhas = 0;
-  while (inicio < total) {
-    const fim = Math.min(inicio + parte, total);
-    try {
-      const r = await buscar(sessao, { method: "PUT", headers: { "content-range": `bytes ${inicio}-${fim - 1}/${total}` }, body: arquivo.slice(inicio, fim) });
-      if (r.status !== 200 && r.status !== 201 && r.status !== 308) throw new Error(`Drive ${r.status}`);
-      const ret = await lerRetorno(r);
-      if ("id" in ret) { aoProgredir?.(1); return ret.id; }
-      inicio = ret.recebido; // o que o Drive diz que tem, não o que achamos que mandamos
-      falhas = 0;
-      aoProgredir?.(inicio / total);
-    } catch (e) {
-      if (++falhas >= TENTATIVAS) throw new Error("O envio para o Drive falhou. Tente de novo.", { cause: e });
-      try {
-        const ret = await ondeParou(sessao, total, buscar);
-        if ("id" in ret) { aoProgredir?.(1); return ret.id; }
-        inicio = ret.recebido;
-      } catch { /* sem resposta: tenta a mesma parte de novo */ }
-    }
-  }
-  throw new Error("O Drive não confirmou o envio. Tente de novo.");
-}
 
 // Anotação do envio em andamento (por card, papel, nome, tamanho e data do arquivo): se a conexão cair depois de o arquivo chegar ao Drive e antes
 // de o servidor registrá-lo, a nova tentativa continua a MESMA sessão e confirma o MESMO arquivo, em vez de subir outro e deixar o primeiro solto.
@@ -86,8 +47,10 @@ function anotacao(chave: string, nova?: Anotacao | null): Anotacao | undefined {
   } catch { /* sem armazenamento: funciona como antes, sem retomar */ }
 }
 
-/** Anexa um arquivo ao card: abre a sessão, sobe direto ao Drive e registra. Devolve o arquivo já no formato da ficha. */
-export async function enviarParaDrive(tarefaId: string, arquivo: File, papel: "anexo" | "capa", ordem: number, aoProgredir?: (fracao: number) => void): Promise<Arquivo> {
+/** Anexa um arquivo ao card: abre a sessão, sobe direto ao Drive e registra. Devolve o arquivo já no formato da ficha.
+    `substitui` (M14): id do arquivo que este troca (a capa velha). O SERVIDOR só tira o velho depois de conferir o novo, e sem mexer na pasta.
+    `envio` (r3 A7, 038): id do envio na fila; o servidor o tira da lista de vídeos pendentes do card (a marca sai quando a lista esvazia). */
+export async function enviarParaDrive(tarefaId: string, arquivo: File, papel: "anexo" | "capa", ordem: number, aoProgredir?: (fracao: number) => void, substitui?: string, envio?: string): Promise<Arquivo> {
   const tipo = tipoDe(arquivo), mime = arquivo.type || "application/octet-stream";
   const chave = chaveEnvio(tarefaId, arquivo, papel);
   let nota = anotacao(chave);
@@ -106,12 +69,13 @@ export async function enviarParaDrive(tarefaId: string, arquivo: File, papel: "a
   anotacao(chave, { sessao: nota?.sessao ?? "", driveId });
   let arquivo_id: string;
   try {
-    ({ arquivo_id } = await chamar<{ arquivo_id: string }>({ acao: "confirmar_envio", tarefa_id: tarefaId, drive_id: driveId, nome: arquivo.name, tipo, tamanho: arquivo.size, papel, ordem }));
+    ({ arquivo_id } = await chamar<{ arquivo_id: string }>({ acao: "confirmar_envio", tarefa_id: tarefaId, drive_id: driveId, nome: arquivo.name, tipo, tamanho: arquivo.size, papel, ordem, ...(substitui && { substitui_arquivo_id: substitui }), ...(envio && { envio_id: envio }) }));
   } catch (e) {
-    // O arquivo continua no Drive: a anotação fica e a próxima tentativa só confirma. Só se descarta quando o servidor diz que o arquivo não serve:
-    // 410 (não existe ou está na lixeira) ou 422 (incompleto, e o servidor já o mandou para a lixeira, ou fora das pastas do sistema).
+    // O arquivo continua no Drive: a anotação fica e a próxima tentativa só confirma (queda de rede, servidor fora do ar).
+    // r2 B6: recusa do servidor (4xx: 410 não existe, 422 não serve, 403 sem permissão, 409 conflito...) não muda tentando de novo:
+    // a anotação sai e a tela mostra o motivo dele, em vez de "tente de novo" para sempre.
     // Ocasião que mudou durante o envio NÃO é motivo: o servidor move o arquivo para a pasta atual do card.
-    if (e instanceof ErroServidor && (e.status === 410 || e.status === 422)) { anotacao(chave, null); throw e; }
+    if (recusaDefinitiva(e)) { anotacao(chave, null); throw e; }
     throw new Error("Não deu para confirmar o envio, tente de novo.", { cause: e });
   }
   anotacao(chave, null);
@@ -320,7 +284,7 @@ export async function enviarDocumentoNaPasta(destino: DestinoPasta, arquivo: Fil
   try {
     ({ arquivo_id } = await chamar<{ arquivo_id: string }>({ acao: acaoDestino(destino, "confirmar"), ...corpoDestino(destino), drive_id: driveId, nome: arquivo.name, tipo, tamanho: arquivo.size }));
   } catch (e) {
-    if (e instanceof ErroServidor && (e.status === 410 || e.status === 422)) { anotacao(chave, null); throw e; }
+    if (recusaDefinitiva(e)) { anotacao(chave, null); throw e; }
     throw new Error("Não deu para confirmar o envio, tente de novo.", { cause: e });
   }
   anotacao(chave, null);

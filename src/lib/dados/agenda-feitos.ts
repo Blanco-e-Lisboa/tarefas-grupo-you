@@ -3,6 +3,7 @@
 "use client";
 import { useSyncExternalStore } from "react";
 import { supabase } from "@/lib/supabase/cliente";
+import { falhou } from "./repositorio";
 import { AVISOS, ligarTempoReal } from "./tempo-real";
 
 const NADA: ReadonlySet<string> = new Set();
@@ -32,12 +33,19 @@ const assinar = (f: () => void) => {
 /** Ids dos compromissos que a pessoa logada marcou como feitos. */
 export const useEventosFeitos = () => useSyncExternalStore(assinar, () => feitos, () => NADA);
 
-/** Marca ou desmarca na hora; se o banco recusar, volta ao que o banco tem. */
-export async function marcarEventoFeito(id: string, feito: boolean) {
+// L4: um pedido por vez por compromisso (fila): marcar e desmarcar rápido chegam ao banco na ordem dos cliques.
+const filas = new Map<string, Promise<void>>();
+
+/** Marca ou desmarca na hora; se o banco recusar, avisa e volta ao que o banco tem. */
+export function marcarEventoFeito(id: string, feito: boolean): Promise<void> {
   const novo = new Set(feitos);
   if (feito) novo.add(id); else novo.delete(id);
   trocar(novo);
-  const tabela = supabase().from("agenda_feitos");
-  const { error } = feito ? await tabela.insert({ evento_id: id }) : await tabela.delete().eq("evento_id", id);
-  if (error && error.code !== "23505") void carregar(); // 23505 = já estava marcado
+  const vez = (filas.get(id) ?? Promise.resolve()).then(async () => {
+    const tabela = supabase().from("agenda_feitos");
+    const { error } = feito ? await tabela.insert({ evento_id: id }) : await tabela.delete().eq("evento_id", id);
+    if (error && error.code !== "23505") { falhou("Não consegui guardar o feito do compromisso. Tente de novo."); void carregar(); } // 23505 = já estava marcado
+  });
+  filas.set(id, vez);
+  return vez;
 }

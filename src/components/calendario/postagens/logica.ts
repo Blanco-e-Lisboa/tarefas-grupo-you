@@ -12,6 +12,10 @@ export function periodoDe(modo: Exclude<Modo, "ano">, cursor: string) {
   return { dias, de: dias[0], ate: dias[dias.length - 1] };
 }
 
+/** L3: mostra o calendário de postagens (e o botão Tarefas | Postagens)? Depois de ver uma vez, a semana nova carregando (virada da semana)
+    não esconde a tela: só esconde se o banco disser que a função não existe. */
+export const temPostagens = (jaTeve: boolean, itens: unknown, ausente: boolean) => !ausente && (jaTeve || itens !== undefined);
+
 /** Por dia, na ordem da hora; empate: empresa. */
 export function porDiaPostagens(itens: readonly Ocorrencia[]) {
   const mapa = new Map<string, Ocorrencia[]>();

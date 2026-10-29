@@ -1,26 +1,29 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- o anexo é um endereço temporário do navegador (blob:), next/image não serve */
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import { enviarEmSegundoPlano, tipoDe, useProgressoEnvio, type Arquivo } from "@/lib/dados";
+import { tipoDe, useProgressoEnvio, type Arquivo } from "@/lib/dados";
+import { avisoTaxa, duracaoDoVideo, mbps } from "./taxa-video";
 import "./anexos.css";
 
 // Anexos da tarefa (itens 129 e 203): imagem, vídeo ou documento, arrastados para cá ou escolhidos no computador.
 // O arquivo escolhido espera em `pendente` (com um blob: só para mostrar); quem sobe (Drive, ou Supabase se o card não tem empresa) é o salvarTarefa, ao salvar a ficha.
-// Vídeo (268) sobe em segundo plano pela fila de envios: na hora, se o card já existe; ao salvar, se é novo.
+// Vídeo (268) sobe em segundo plano pela fila de envios, a partir do Salvar (M11: antes subia na hora de escolher e o "Descartar" não o cancelava).
+// M20: ao escolher um vídeo, a duração é lida no navegador e a ficha avisa se passa de 25 Mbps (a Meta recusa).
 // `papel="capa"`: campo da capa do Reels, aceita UMA imagem (a nova troca a antiga). `carrossel`: os anexos se arrastam para mudar a ordem.
 const DOCUMENTO = /^(application\/(pdf|msword|vnd\.ms-excel|vnd\.ms-powerpoint|vnd\.openxmlformats-officedocument\..+)|text\/(plain|csv))$/;
 const CLIPE = "M21 12.5l-8.5 8.5a5.5 5.5 0 01-7.8-7.8L13.2 4.7a3.7 3.7 0 015.2 5.2l-8.5 8.5a1.9 1.9 0 01-2.6-2.6L14.6 7.5";
 const ROTULO = { video: "Vídeo", imagem: "Foto", documento: "Doc" } as const;
 
-type Props = { valor: Arquivo[]; aoMudar: (v: Arquivo[]) => void; papel?: "anexo" | "capa"; carrossel?: boolean; empresaId?: string; tarefaId?: string };
+type Props = { valor: Arquivo[]; aoMudar: (v: Arquivo[]) => void; papel?: "anexo" | "capa"; carrossel?: boolean; empresaId?: string };
 
-export function Anexos({ valor, aoMudar, papel = "anexo", carrossel, empresaId, tarefaId }: Props) {
+export function Anexos({ valor, aoMudar, papel = "anexo", carrossel, empresaId }: Props) {
   const capa = papel === "capa";
   const entrada = useRef<HTMLInputElement>(null);
   const grande = useRef<HTMLDialogElement>(null);
   const [aberto, setAberto] = useState<Arquivo | null>(null);
   const [sobre, setSobre] = useState(false);
   const [recusa, setRecusa] = useState("");
+  const [taxaAlta, setTaxaAlta] = useState<string[]>([]);
   const [arrastando, setArrastando] = useState<number | null>(null);
   const [alvo, setAlvo] = useState<number | null>(null);
   const progresso = useProgressoEnvio();
@@ -37,10 +40,11 @@ export function Anexos({ valor, aoMudar, papel = "anexo", carrossel, empresaId, 
       setRecusa("Escolha a empresa para anexar vídeo");
       aceitos = aceitos.filter((f) => !f.type.startsWith("video/"));
     }
-    if (tarefaId && empresaId) { // 268: card que já existe no banco: o vídeo começa a subir já, em segundo plano, mesmo que a ficha feche
-      aceitos.filter((f) => f.type.startsWith("video/")).forEach((f, i) => enviarEmSegundoPlano(tarefaId, f, { papel, ordem: valor.length + i }));
-      aceitos = aceitos.filter((f) => !f.type.startsWith("video/"));
-    }
+    setTaxaAlta([]);
+    aceitos.filter((f) => f.type.startsWith("video/")).forEach((f) => void duracaoDoVideo(f).then((s) => {
+      const aviso = s ? avisoTaxa(f.name, mbps(f.size, s)) : "";
+      if (aviso) setTaxaAlta((x) => [...x, aviso]);
+    }));
     const novos = aceitos.map((f): Arquivo => ({ nome: f.name, url: URL.createObjectURL(f), tipo: tipoDe(f), pendente: f, papel }));
     if (novos.length) aoMudar(capa ? novos : [...valor, ...novos]);
   }
@@ -100,6 +104,7 @@ export function Anexos({ valor, aoMudar, papel = "anexo", carrossel, empresaId, 
         </span>
       ))}
       {recusa && <small className="ficha-anexo-recusa" role="alert">{recusa}</small>}
+      {taxaAlta.map((t) => <small key={t} className="ficha-anexo-recusa" role="alert">{t}</small>)}
       {valor.filter((a) => a.aviso).map((a) => <small key={a.caminho ?? a.id ?? a.nome} className="ficha-anexo-aviso">{a.nome}: {a.aviso}</small>)}
       {aberto && (
         <dialog ref={grande} className="ficha-grande" aria-label={aberto.nome} onClose={(e) => { e.stopPropagation(); setAberto(null); }} onClick={(e) => e.target === e.currentTarget && grande.current?.close()}>

@@ -1,0 +1,78 @@
+Persistem **4 falhas nos itens da conferência** e encontrei **7 bugs novos**, fora da `r1-lista.md`.
+
+Corte da revisão: **29/10/2026, 11h47, Brasília**. Não editei arquivos. Outros processos alteraram o código durante a auditoria; reconferi os pontos afetados antes de fechar este relatório. Os vereditos avaliam o código local, sem comprovar aplicação em produção.
+
+**Parte 1: conferência das correções**
+
+| Item | Veredito | Arquivo:linha e conclusão |
+|---|---|---|
+| A1 | **Ainda falha** | [versao-card.ts:30](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/versao-card.ts:30>). O travamento foi corrigido, mas `anotarVersaoNova` pode registrar como própria uma edição de outra pessoa. Após “Postar agora”, outra pessoa altera o card antes dessa leitura; o próximo salvar da ficha antiga aceita a versão nova e sobrescreve a alteração. Reproduzido em memória. |
+| A2 | ok | [grade.ts:41](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/tarefas/grade.ts:41>). A cópia separa anexos e programação do original. |
+| A3 | ok | [MuralIdeias.tsx:137](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/pastas/MuralIdeias.tsx:137>). Passar pelo campo sem digitar não regrava o texto antigo. |
+| A4 | ok | [037_alarme_e_tentar_de_novo.sql:27](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/037_alarme_e_tentar_de_novo.sql:27>). Zera rodadas e tentativas das redes com erro. |
+| A5 | ok | [estado.ts:132](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/functions/postar-meta/estado.ts:132>). Cancelar preserva o registro quando a publicação já foi solicitada. |
+| A6 | **Ainda falha** | [pastas-drive.ts:114](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/functions/drive/pastas-drive.ts:114>). A pasta ganhou reconferência, mas continua existindo intervalo entre consultar a etapa e excluir cada arquivo. Reproduzi o card voltando para Edição nesse intervalo e o arquivo indo para a lixeira. |
+| A7 | **Ainda falha** | [envios.ts:62](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/envios.ts:62>), [034:115](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/034_postagem_destrava_e_trava_empresa.sql:115>). A marca volta para o segundo vídeo, mas somente depois da resposta ao navegador. Ao chegar o primeiro, o banco limpa a marca e pode acordar imediatamente a postagem vencida. A publicação pode começar antes da remarcação. |
+| A8 | ok | [034:158](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/034_postagem_destrava_e_trava_empresa.sql:158>). Vídeos anteriores do carrossel permanecem publicáveis. |
+| A9 | ok | [TelaTarefas.tsx:220](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/tarefas/TelaTarefas.tsx:220>). Os caminhos de movimentação do card programado agora recusam a mudança. |
+| M1 | ok | [034:139](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/034_postagem_destrava_e_trava_empresa.sql:139>). A restrição à You existe no banco e é explicada na ficha. |
+| M2 | ok | [035:38](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/035_pauta_respeita_quem_mexeu.sql:38>). A proteção passou dos quatro campos para uma marca de tarefa editada; tags também são consideradas. |
+| M4 | ok | [034:112](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/034_postagem_destrava_e_trava_empresa.sql:112>). Tipo e empresa participam do controle dos alarmes. |
+| M5 | ok | [tempo-real.ts:28](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/tempo-real.ts:28>). Cada ligação recebe um canal diferente. |
+| M6 | ok | [anotacoes.ts:51](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/anotacoes.ts:51>). Gravações da mesma nota seguem uma fila, com aviso e nova tentativa quando recusadas. |
+| M7 | ok | [envios.ts:24](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/envios.ts:24>). Resolve a cópia da lista ao duplicar uma aba com sinal de vida recente. Há uma regressão diferente no achado novo 6 abaixo. |
+| M8 | ok | [anexos.ts:119](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/anexos.ts:119>). O segundo salvar aguarda o envio do mesmo arquivo. |
+| M9 | ok | [repositorio.ts:193](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/repositorio.ts:193>). O fim do envio preserva anexos que chegaram durante ele. |
+| M10 | ok | [repositorio.ts:98](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/repositorio.ts:98>). Falha de leitura preserva anexos conhecidos; a exclusão usa o caminho com arquivos quando necessário. |
+| M11 | ok | [Anexos.tsx:49](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/ficha/Anexos.tsx:49>). Escolher o vídeo prepara o rascunho; o envio começa ao salvar. |
+| M12 | ok | [037:65](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/037_alarme_e_tentar_de_novo.sql:65>). Uma rede escolhida sem registro mantém trabalho pendente. |
+| M13 | ok | [Publicacao.tsx:130](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/ficha/Publicacao.tsx:130>). A versão final oferece data também no estado de erro; “Tentar de novo” grava essa data antes de chamar o banco. |
+| M14 | ok | [acoes.ts:125](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/functions/drive/acoes.ts:125>). A versão final troca a referência da capa antes de excluir a antiga. Repeti a falha de banco: a capa antiga permaneceu. |
+| M15 | ok | [agenda.ts:8](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/agenda.ts:8>). A origem pessoal do Adrian é preservada e aparece no filtro. |
+| M16 | ok | [comum.ts:16](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/functions/drive/comum.ts:16>). Os formatos de Range apontados respeitam o teto de 4 MB. |
+| M17 | ok | [grade.ts:43](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/tarefas/grade.ts:43>). A tarefa pessoal duplicada mantém o destino pelo dono. |
+| M18 | ok | [postagem.ts:13](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/ficha/postagem.ts:13>). A comparação usa Brasília. |
+| M19 | ok | [redes.ts:119](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/functions/postar-meta/redes.ts:119>). A recuperação registra o post sem tentar adivinhar o link pela legenda. |
+| M20 | ok | [redes.ts:37](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/functions/postar-meta/redes.ts:37>). Sem duração medida, o vídeo espera; acima do limite, é barrado antes do envio à Meta. |
+| M21 | ok | [ideias.ts:235](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/ideias.ts:235>). A exclusão verifica a resposta e guarda os caminhos para nova tentativa. Há outro problema de concorrência no achado novo 4. |
+| B2 | ok | [acoes.ts:149](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/functions/drive/acoes.ts:149>). Criar e renomear tema consultam a permissão. |
+| B3 | **Ainda falha** | [acoes.ts:110](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/functions/drive/acoes.ts:110>). Bytes desconhecidos voltam a confiar no tipo informado ao Drive. Reproduzi um PDF declarado como JPEG sendo aceito como imagem e capa, com resposta 200. |
+| B4 | ok | [035:123](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/035_pauta_respeita_quem_mexeu.sql:123>). A desmarcação manual fica registrada. |
+| B5 | ok | [036:9](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/036_contar_tags_so_quem_edita.sql:9>). A contagem geral exige a permissão prevista. |
+| B6 | ok | [grade.ts:49](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/tarefas/grade.ts:49>). A migração aguarda confirmação e preserva recusadas; tarefas recebidas usam a operação de marcar feita. |
+| B7 | ok | [repositorio.ts:174](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/repositorio.ts:174>). A falha antiga não desfaz uma gravação posterior. |
+| B8 | ok | [repositorio.ts:338](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/repositorio.ts:338>). Zero linhas excluídas é tratado como recusa. |
+| B9 | ok | [grade.ts:35](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/tarefas/grade.ts:35>). A duração considera ambas as datas, dentro dos limites do Caderno. |
+| B10 | ok no fluxo avaliado | [Ficha.tsx:143](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/ficha/Ficha.tsx:143>). Permanece a ressalva anterior: o fluxo atual não produz tarefa de dia inteiro com fim em outro dia; registros importados não foram comprovados. |
+| B11 | ok | [agenda.ts:83](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/agenda.ts:83>). Leituras antigas são descartadas; a pauta tem proteção equivalente por período. |
+| B12 | ok | [TelaConteudos.tsx:30](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/conteudos/TelaConteudos.tsx:30>). A Esteira confere novamente o dia a cada minuto. |
+| B13 | ok | [TelaPastas.tsx:258](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/pastas/TelaPastas.tsx:258>). A ficha recebe a restrição de edição e os tipos de conteúdo. |
+| B14 | ok | [sair.ts:22](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/casca/sair.ts:22>). As outras abas recebem o aviso para limpar seus envios e recarregar. |
+| B15 | ok | [CardsPasta.tsx:30](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/pastas/CardsPasta.tsx:30>). A trava imediata impede operações simultâneas pelos cliques repetidos apontados. |
+
+Os **seis bugs adicionais** daquela conferência ficaram assim:
+
+| Bug anterior | Veredito atual | Referência |
+|---|---|---|
+| 1. Registro do Facebook apagado após solicitar publicação | ok | `estado.ts:132`, A5 acima |
+| 2. Segundo vídeo do mesmo card fica sem bloqueio | **Ainda falha no intervalo entre as chamadas** | `envios.ts:62`, A7 acima |
+| 3. Troca da única capa apaga a pasta com o envio novo | ok | `acoes.ts:125`, M14 acima |
+| 4. Salvar sem mudanças trava a próxima gravação | ok | [versao-card.ts:12](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/versao-card.ts:12>) |
+| 5. Pendência de vídeo desliga definitivamente a programação | ok | [034:115](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/034_postagem_destrava_e_trava_empresa.sql:115>) e [estado.ts:203](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/functions/postar-meta/estado.ts:203>) |
+| 6. Fim do envio remove anexos recebidos durante ele | ok | `repositorio.ts:193`, M9 acima |
+
+M3 e B1 continuam fora dos consertos por decisão registrada. B16 depende da configuração do serviço, não verificada nesta auditoria local.
+
+**Parte 2: bugs novos, do mais grave ao menos grave**
+
+| Título | Arquivo:linha | Defeito | Cenário | Gravidade | Confiança |
+|---|---|---|---|---|---|
+| **1. Rede retirada do card ainda recebe o post** | [banco.ts:35](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/functions/postar-meta/banco.ts:35>) | A conferência imediatamente anterior à publicação verifica o card, mas não verifica se aquela rede continua escolhida. | A execução pega Instagram e Facebook; alguém retira Facebook enquanto ela trabalha. Reproduzi o card contendo somente Instagram e a publicação saindo nas duas redes. | **Alta** | Alta, reproduzido |
+| **2. Retomada publica a legenda antiga após correção** | [redes.ts:127](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/functions/postar-meta/redes.ts:127>) | Um rascunho já criado na Meta é reutilizado sem conferir se legenda, mídia ou capa mudaram. | O Reels fica processando; a legenda é corrigida no card; a execução seguinte publica o rascunho antigo. Reproduzi “CORRIGIDA” no banco e “Legenda do post” na publicação. | **Alta** | Alta, reproduzido |
+| **3. Digitar durante “Salvando” perde o texto novo** | [Ficha.tsx:171](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/ficha/Ficha.tsx:171>) | Os campos continuam editáveis durante a gravação, mas a conclusão fecha a ficha usando o conteúdo capturado no clique inicial. | Clicar Salvar e continuar escrevendo nas notas durante uma resposta lenta ou envio de imagem. Reproduzi o texto antigo enviado ao banco e a ficha fechando com o texto novo apenas no rascunho. | Média | Alta, reproduzido em memória |
+| **4. Print que termina de subir recria uma ideia apagada** | [PrintsIdeia.tsx:17](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/components/pastas/PrintsIdeia.tsx:17>) | O envio não é invalidado quando a folha é apagada. Ao terminar, chama uma gravação que também cria registros ausentes. | Colar um print e apagar a ideia antes do envio terminar. Reproduzi a ideia voltando com o mesmo id após sua exclusão. | Média | Alta, reproduzido |
+| **5. Ordem de imagens antigas não é gravada** | [anexos.ts:132](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/anexos.ts:132>) | A mudança de ordem só é enviada para arquivos do Drive. Imagens antigas no armazenamento do Supabase são ignoradas. | Reordenar um carrossel com imagens antigas. A ficha mostra a sequência nova, mas recarregar ou publicar usa a sequência persistida anteriormente. Reproduzi a inversão na tela sem nenhuma gravação da ordem. | Média | Alta, reproduzido |
+| **6. Recarregar a própria aba esconde um envio interrompido** | [envios.ts:24](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/src/lib/dados/envios.ts:24>) | O sinal de vida recente é interpretado como prova de que outra aba continua enviando. Também é o sinal deixado pela própria aba antes de recarregar. A lista não é reavaliada quando ele vence. | Recarregar durante um envio e confirmar a saída. O envio para, mas não aparece como interrompido. Reproduzi uma lista persistida com um vídeo e zero avisos após recarregar. | Média | Alta, reproduzido |
+| **7. Não é possível limpar o título somente em um dia da série** | [315-01-pauta.sql:98](<C:/Users/You Contab_/Grupo-You/Sistemas-Grupo-You/grade-conteudo/supabase/_colar/2026-10-26-315-01-pauta.sql:98>) | A gravação transforma o título vazio da exceção em `null`; a leitura interpreta `null` como “usar o título da série”. | Abrir uma ocorrência semanal, apagar seu título opcional e salvar “Só este dia”. O título anterior reaparece, embora a gravação informe sucesso. | Baixa | Alta, confirmado pelo código |
+
+Validação final: **lint com 0 erros e 19 avisos**, **checagem de tipos passando** e `git diff --check` sem apontamentos. As reproduções foram executadas em memória, sem serviços reais. A suíte Vitest não iniciou porque o ambiente somente leitura bloqueou seus arquivos temporários. Não executei build nem apliquei SQL.

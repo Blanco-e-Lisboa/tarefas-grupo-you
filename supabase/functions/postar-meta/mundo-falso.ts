@@ -96,7 +96,7 @@ export function mundo(o: { verdade?: boolean; conferencias?: number; env?: Recor
   const env = (n: string) => ENV[n];
   const google = criarGoogle({ env, fetch: rotear, agora: () => t });
   const deps: Deps = {
-    env, fetch: rotear, baixarDrive: (id, range) => google.baixarDoDrive(id, range),
+    env, fetch: rotear, baixarDrive: (id, range) => google.baixarDoDrive(id, range), duracaoDrive: (id) => google.duracaoVideo(id),
     paraJpg: async (png) => { conversoes++; return Uint8Array.of(...JPG, ...png.slice(4)); },
     waitUntil: () => {}, agora: () => t, dormir: async (ms) => { t += ms; }, log: (l) => void logs.push(l),
   };
@@ -104,10 +104,11 @@ export function mundo(o: { verdade?: boolean; conferencias?: number; env?: Recor
   const manipulador = criarManipulador(deps);
 
   /** Card de Postagem da You em Aprovado com os anexos dados (vão para o Drive falso). */
-  function card(c: Linha, anexos: { tipo: string; bytes: Uint8Array; papel?: string; nome?: string }[]) {
-    b.estado.tabelas.tarefas.push({ id: TAREFA, titulo: "Card de teste", tipo: "postagem", empresa_id: "you", etapa: "aprovado", legenda: "Legenda do post", postar_redes: ["instagram", "facebook"], capa_quadro_ms: null, ...c });
+  function card(c: Linha, anexos: { tipo: string; bytes: Uint8Array; papel?: string; nome?: string; duracaoMs?: number }[]) {
+    b.estado.tabelas.tarefas.push({ id: TAREFA, titulo: "Card de teste", tipo: "postagem", empresa_id: "you", etapa: "aprovado", postar_em: "2026-10-25T17:00", legenda: "Legenda do post", postar_redes: ["instagram", "facebook"], capa_quadro_ms: null, ...c });
     anexos.forEach((a, i) => {
       const f = g.estado.semear(a.nome ?? `arq${i}`, a.bytes, a.tipo === "video" ? "video/mp4" : "image/jpeg");
+      f.duracaoMs = a.duracaoMs ?? (a.tipo === "video" ? 60_000 : undefined); // vídeo do teste: 1 min medido pelo Drive (0 = o Drive não mediu)
       b.estado.tabelas.arquivos.push({ id: `a${i}`, tarefa_id: TAREFA, nome: a.nome ?? `arq${i}`, tipo: a.tipo, drive_id: f.id, caminho: null, tamanho: a.bytes.length, ordem: i, papel: a.papel ?? "anexo" });
     });
   }

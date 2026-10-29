@@ -1,7 +1,7 @@
 // Achados da Lupa #2 sobre a função drive e o envio em partes, cada um com a sua prova (Google falso, banco falso).
 import { describe, expect, it } from "vitest";
 import { enviarEmPartes } from "../../../src/lib/dados/drive";
-import { BASE_FALSA, criarGoogleFalso } from "../_shared/google-falso.ts";
+import { BASE_FALSA, criarGoogleFalso, videoFalso, fotoFalsa } from "../_shared/google-falso.ts";
 import { criarGoogle } from "../_shared/google.ts";
 import { criarManipulador } from "./acoes.ts";
 import { criarDriveApi } from "./drive-api.ts";
@@ -18,6 +18,7 @@ function montar() {
   b.estado.usuarios.set("tok-n", "u-n");
   b.estado.rpcs.ler_segredo_servico = ({ p_nome }) => (p_nome === "tarefas_funcoes_segredo" ? "campainha" : "refresh-falso");
   b.estado.rpcs.pode_mexer_anexos = () => true;
+  b.estado.rpcs.pode_mexer_pastas = () => true; // B2: criar e renomear Tema perguntam ao banco
   b.estado.tabelas.tarefas.push({ id: "t1", titulo: "Card", empresa_id: "you", ocasiao_id: null, etapa: "edicao" }, { id: "t2", titulo: "Outro", empresa_id: "you", ocasiao_id: null, etapa: "edicao" });
   const google = criarGoogle({ env, fetch: f });
   const tratar = criarManipulador({ env, fetch: f, api: criarDriveApi({ api: BASE_FALSA, token: google.tokenGoogle, fetch: f }), baixar: google.baixarDoDrive });
@@ -32,7 +33,7 @@ describe("achados da Lupa #2", () => {
     const m = montar();
     await sessao(m);
     const pastaAlheia = [...m.g.estado.arquivos.values()].find((a) => a.folder)!; // a raiz: existe, mas não é arquivo da pasta do card
-    const estranho = m.g.estado.semear("alheio.mp4", new Uint8Array(4), "video/mp4", ["outra-pasta"]);
+    const estranho = m.g.estado.semear("alheio.mp4", videoFalso(4), "video/mp4", ["outra-pasta"]);
     expect((await confirmar(m, pastaAlheia.id)).status).toBe(422);
     expect((await confirmar(m, estranho.id)).status).toBe(422);
     expect([...m.g.estado.arquivos.values()].some((a) => a.trashed)).toBe(false);
@@ -40,7 +41,7 @@ describe("achados da Lupa #2", () => {
   it("13: drive_id já registrado em OUTRO card não devolve sucesso", async () => {
     const m = montar();
     const s = (await (await sessao(m)).json()) as { sessao_url: string };
-    const id = await enviarEmPartes(s.sessao_url, new Blob([new Uint8Array(4)]), undefined, m.g.fetch, 4);
+    const id = await enviarEmPartes(s.sessao_url, new Blob([videoFalso(4)]), undefined, m.g.fetch, 4);
     expect((await confirmar(m, id)).status).toBe(200);
     expect((await confirmar(m, id, 4, "t2")).status).toBe(409);
   });
@@ -48,7 +49,7 @@ describe("achados da Lupa #2", () => {
     const m = montar();
     const enviar = async () => {
       const r = await m.chamar({ acao: "sessao_envio", tarefa_id: "t1", nome: "c.png", tipo: "imagem", mime: "image/png", tamanho: 3, papel: "capa" });
-      const id = await enviarEmPartes(((await r.json()) as { sessao_url: string }).sessao_url, new Blob([new Uint8Array(3)]), undefined, m.g.fetch, 3);
+      const id = await enviarEmPartes(((await r.json()) as { sessao_url: string }).sessao_url, new Blob([fotoFalsa(3)]), undefined, m.g.fetch, 3);
       return { id, r: await m.chamar({ acao: "confirmar_envio", tarefa_id: "t1", drive_id: id, nome: "c.png", tipo: "imagem", tamanho: 3, papel: "capa", ordem: 0 }) };
     };
     expect((await enviar()).r.status).toBe(200);
@@ -72,8 +73,8 @@ describe("achados da Lupa #2", () => {
   });
   it("2: apagar_tarefa com falha no segundo arquivo: o primeiro já saiu do banco e o segundo continua lá (dá para repetir)", async () => {
     const m = montar();
-    const a = m.g.estado.semear("a.mp4", new Uint8Array(2));
-    m.g.estado.semear("b.mp4", new Uint8Array(2));
+    const a = m.g.estado.semear("a.mp4", videoFalso(2));
+    m.g.estado.semear("b.mp4", videoFalso(2));
     m.b.estado.rpcs.pode_apagar_tarefa = () => true;
     m.b.estado.tabelas.arquivos.push({ id: "la", tarefa_id: "t1", drive_id: a.id }, { id: "lb", tarefa_id: "t1", drive_id: "inexistente-erro" });
     // "inexistente-erro" dá 404 no Drive = já apagado: conta como feito; para forçar falha trocamos a rota por 500
@@ -99,7 +100,7 @@ describe("envio em partes: achados 3 e 9", () => {
       if (!perdeu && i?.method === "PUT" && String((i.headers as Record<string, string>)["content-range"]).startsWith("bytes 3-5")) { perdeu = true; throw new Error("rede caiu"); } // o Drive recebeu, a resposta sumiu
       return r;
     }) as typeof fetch;
-    const id = await enviarEmPartes(sessaoUrl, new Blob([new Uint8Array(6)]), undefined, buscar, 3);
+    const id = await enviarEmPartes(sessaoUrl, new Blob([videoFalso(6)]), undefined, buscar, 3);
     expect(perdeu).toBe(true);
     expect(g.estado.arquivos.get(id)!.bytes.length).toBe(6);
   });

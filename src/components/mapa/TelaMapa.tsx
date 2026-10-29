@@ -3,12 +3,12 @@ import { useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type 
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { SplitText } from "gsap/SplitText";
-import { useEmpresas, useTarefas, type NovaTarefa, type Tarefa } from "@/lib/dados";
+import { podeAlterar, useEmpresas, useEu, useTarefas, type NovaTarefa, type Tarefa } from "@/lib/dados";
 import { useFiltroEmpresa } from "@/lib/filtro-empresa";
 import { FiltroEmpresa } from "@/components/casca/FiltroEmpresa";
 import { Ficha } from "@/components/ficha/Ficha";
 import { diaCurto, nomeMes, nomeSemana } from "@/components/calendario/logica";
-import { conteudos, diaDe, marcosDoMapa, inicioDaLinha, postadosFora, hoje, diasDoPeriodo, filaPorDia, foiPostado, semData, tituloDe, postadosNoMes, ultimoDia } from "./logica";
+import { aCadaMinuto, conteudos, diaDe, marcosDoMapa, inicioDaLinha, postadosFora, hoje, diasDoPeriodo, filaPorDia, foiPostado, semData, tituloDe, postadosNoMes, ultimoDia } from "./logica";
 import { PastaDoDia } from "./PastaDoDia";
 import { EmOrdem, type Formato } from "./EmOrdem";
 import "./mapa.css";
@@ -33,15 +33,15 @@ const CHAVE_FORMATO = "grade:mapa-formato";
 const formatoSalvo = (): Formato => { try { return localStorage.getItem(CHAVE_FORMATO) === "fila" ? "fila" : "linha"; } catch { return "linha"; } };
 const lembrar = (f: Formato) => { try { localStorage.setItem(CHAVE_FORMATO, f); } catch {} };
 
-const semAviso = () => () => {};
 // O dia de hoje só existe no navegador (o servidor pode estar em outro fuso): espera montar para não dar diferença na hidratação.
 export function TelaMapa() {
-  const inicio = useSyncExternalStore(semAviso, () => hoje(), () => ""); // servidor: "" até hidratar
+  const inicio = useSyncExternalStore(aCadaMinuto, () => hoje(), () => ""); // servidor: "" até hidratar
   return inicio ? <Mapa inicio={inicio} /> : null;
 }
 
 function Mapa({ inicio: INICIO }: { inicio: string }) {
   const tarefas = useTarefas();
+  const eu = useEu();
   const { aplicar } = useFiltroEmpresa();
   const [aberta, setAberta] = useState<NovaTarefa | null>(null);
   const [formato, setFormato] = useState<Formato>(formatoSalvo);
@@ -96,7 +96,8 @@ function Mapa({ inicio: INICIO }: { inicio: string }) {
         ? <Linha dias={dias} inicio={PRIMEIRO} marcos={marcos} abrir={setAberta} topo={topo} />
         : <>{topo}<p className="mapa-vazio">Nada para mostrar com os filtros de agora. Crie uma tarefa do tipo Postagem no calendário e ela aparece aqui.</p></>}
 
-      {aberta && <Ficha key={(aberta as Tarefa).id} tarefa={aberta} aoFechar={() => setAberta(null)} />}
+      {/* L5: como nas Pastas e no Calendário de Postagens: só olhar quando não pode editar, e só os tipos de conteúdo */}
+      {aberta && <Ficha key={(aberta as Tarefa).id} tarefa={aberta} tipos={["roteiro", "gravacao", "edicao", "postagem"]} aoFechar={() => setAberta(null)} soLer={!podeAlterar(aberta as Tarefa, eu)} />}
     </section>
   );
 }

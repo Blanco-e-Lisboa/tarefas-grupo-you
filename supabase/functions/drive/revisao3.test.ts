@@ -1,6 +1,6 @@
 // Item 214 (achado 3 do Drive): o envio é do card para o qual a sessão foi aberta. Cada teste FALHA no código antigo.
 import { describe, expect, it } from "vitest";
-import { BASE_FALSA, criarGoogleFalso } from "../_shared/google-falso.ts";
+import { BASE_FALSA, criarGoogleFalso, videoFalso } from "../_shared/google-falso.ts";
 import { criarGoogle } from "../_shared/google.ts";
 import { criarManipulador } from "./acoes.ts";
 import { criarDriveApi } from "./drive-api.ts";
@@ -18,6 +18,7 @@ function montar() {
   b.estado.usuarios.set("tok-n", "u-n");
   b.estado.rpcs.ler_segredo_servico = ({ p_nome }) => (p_nome === "tarefas_funcoes_segredo" ? "campainha" : "refresh-falso");
   b.estado.rpcs.pode_mexer_anexos = () => true;
+  b.estado.rpcs.pode_mexer_pastas = () => true; // B2: criar e renomear Tema perguntam ao banco
   b.estado.tabelas.tarefas.push(
     { id: "A", titulo: "Card A", empresa_id: "you", ocasiao_id: null, etapa: "edicao" },
     { id: "B", titulo: "Card B", empresa_id: "you", ocasiao_id: null, etapa: "edicao" },
@@ -29,7 +30,7 @@ function montar() {
   /** Abre a sessão para o card `para`, sobe 4 bytes e devolve o id do arquivo no Drive. */
   const enviar = async (para: string) => {
     const s = (await (await chamar({ acao: "sessao_envio", tarefa_id: para, nome: "a.mp4", tipo: "video", mime: "video/mp4", tamanho: 4, papel: "anexo" })).json()) as { sessao_url: string };
-    return ((await (await g.fetch(s.sessao_url, { method: "PUT", headers: { "content-range": "bytes 0-3/4" }, body: new Uint8Array(4) })).json()) as { id: string }).id;
+    return ((await (await g.fetch(s.sessao_url, { method: "PUT", headers: { "content-range": "bytes 0-3/4" }, body: videoFalso(4) })).json()) as { id: string }).id;
   };
   const confirmar = (card: string, driveId: string) => chamar({ acao: "confirmar_envio", tarefa_id: card, drive_id: driveId, nome: "a.mp4", tipo: "video", tamanho: 4, papel: "anexo", ordem: 0 });
   return { g, b, enviar, confirmar };

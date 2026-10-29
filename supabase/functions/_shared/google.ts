@@ -60,12 +60,23 @@ export function criarGoogle(deps: Deps = {}) {
     return r;
   }
 
-  return { tokenGoogle, baixarDoDrive, lerSegredo, esquecerToken: () => { cache = undefined; } };
+  /** Duração do vídeo medida pelo Drive, em ms. undefined = o Drive ainda não mediu (ou não respondeu): quem chama não barra. */
+  async function duracaoVideo(driveId: string): Promise<number | undefined> {
+    const r = await buscar(`${bases(e).api}/drive/v3/files/${encodeURIComponent(driveId)}?fields=videoMediaMetadata(durationMillis)`, {
+      headers: { authorization: `Bearer ${await tokenGoogle()}` },
+    });
+    if (!r.ok) return undefined;
+    const ms = Number(((await r.json()) as { videoMediaMetadata?: { durationMillis?: string } }).videoMediaMetadata?.durationMillis);
+    return ms > 0 ? ms : undefined;
+  }
+
+  return { tokenGoogle, baixarDoDrive, duracaoVideo, lerSegredo, esquecerToken: () => { cache = undefined; } };
 }
 
 const padrao = criarGoogle();
 export const tokenGoogle = padrao.tokenGoogle;
 export const baixarDoDrive = padrao.baixarDoDrive;
+export const duracaoVideo = padrao.duracaoVideo;
 export const lerSegredo = padrao.lerSegredo;
 
 // ---- assinatura HMAC (link do vídeo de 10 min, estado do OAuth) ----

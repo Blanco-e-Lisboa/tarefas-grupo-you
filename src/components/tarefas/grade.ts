@@ -1,5 +1,5 @@
-import { comoNatham, RESPONSAVEIS, type EventoAgenda, type Responsavel, type Tarefa } from "@/lib/dados";
-import { ultimoDia } from "@/components/calendario/logica";
+import { comoNatham, duplicarCard, podeAlterar, podeMarcar, RESPONSAVEIS, type EventoAgenda, type NovaTarefa, type Responsavel, type Tag, type Tarefa } from "@/lib/dados";
+import { deTexto, ultimoDia } from "@/components/calendario/logica";
 
 // Margem de horários do caderno (igual ao CRM): a linha k vale 07:00 + 30 min × k, 31 linhas até 22:00.
 export const PRIMEIRA = 7 * 60;
@@ -30,6 +30,32 @@ export const duracaoDe = (t: Tarefa) => {
   const h = horaDe(t);
   return h && t.fim && t.fim.length > 10 && t.fim.slice(0, 10) === t.inicio?.slice(0, 10) ? Math.max(PASSO, minutos(t.fim.slice(11, 16)) - minutos(h)) : PASSO;
 };
+
+/** B9: minutos que a tarefa pede ao ser arrastada para outra linha: do início ao fim de verdade (passa da meia-noite também). Sem hora ou sem fim = 30. */
+export const duracaoQuerida = (t: Tarefa) =>
+  horaDe(t) && t.fim && t.fim.length > 10 ? Math.max(15, Math.round((deTexto(t.fim).getTime() - deTexto(t.inicio!).getTime()) / 60_000)) : PASSO;
+
+/** A2/M17: cópia pelo ⋮ do Caderno ("Duplicar" e "Criar tarefa para"). Card de conteúdo copia como na Esteira (duplicarCard: volta para Roteiro,
+    sem data do post, legenda, anexos e aprovação), mantendo o horário. Tarefa do Caderno fica no caderno do mesmo dono e nunca leva os anexos
+    (os arquivos são do original: tirar um da cópia apagaria o dele). */
+export const copiaDoCaderno = (t: Tarefa, todas: readonly Tarefa[], tags: readonly Tag[]): NovaTarefa => ehConteudo(t)
+  ? { ...duplicarCard(t, todas, tags), inicio: t.inicio, fim: t.fim, diaInteiro: t.diaInteiro }
+  : { ...t, id: undefined, concluida: false, arquivos: [], postagens: undefined, postarEm: undefined, vaiProGoogle: undefined, enviarPara: t.dono }; // L7: só o Calendário liga a ida ao Google, ao criar
+
+const CHAVE_FEITAS = "grade:tarefas-feitas";
+/** B6: migração única das "feitas" que moravam no navegador para o campo concluida. Só sai da lista o que o banco confirmou
+    (ou que não precisa mais: já feita, tarefa que não existe, ou que a pessoa não pode marcar); o que o banco recusou fica para a próxima abertura.
+    L2: tarefa RECEBIDA é só leitura para quem recebeu: marca pelo marcarFeita (031), como o clique no Caderno. */
+export async function migrarFeitas(guarda: Pick<Storage, "getItem" | "setItem" | "removeItem">, tarefas: readonly Tarefa[], eu: Responsavel,
+  { salvar, marcarFeita }: { salvar: (t: Tarefa) => Promise<unknown>; marcarFeita: (id: string, feita: boolean) => Promise<boolean> }) {
+  const velhas: unknown = JSON.parse(guarda.getItem(CHAVE_FEITAS) ?? "[]");
+  if (!Array.isArray(velhas)) return guarda.removeItem(CHAVE_FEITAS);
+  const faltam = tarefas.filter((t) => velhas.includes(t.id) && !t.concluida && podeMarcar(t, eu));
+  const marcar = async (t: Tarefa) => (podeAlterar(t, eu) ? !!(await salvar({ ...t, concluida: true })) : marcarFeita(t.id, true));
+  const recusadas = (await Promise.all(faltam.map(async (t) => ((await marcar(t)) ? null : t.id)))).filter(Boolean);
+  if (recusadas.length) guarda.setItem(CHAVE_FEITAS, JSON.stringify(recusadas));
+  else guarda.removeItem(CHAVE_FEITAS);
+}
 
 /** Linha de baixo de uma tarefa longa (item 275): ocupada pelo bloco, não aceita outra tarefa. */
 export type Continua = { continuaDe: Tarefa };

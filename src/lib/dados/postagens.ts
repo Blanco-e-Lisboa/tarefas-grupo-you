@@ -1,6 +1,7 @@
 // Leitura da postagem automática (196): o que a função postar-meta gravou por card e por rede (tabela postagens, 019). Só leitura.
 import type { supabase } from "@/lib/supabase/cliente";
 import type { Postagem, Tarefa } from "./tipos";
+import { horaDeBrasilia } from "./agenda";
 
 /** O que se grava em postar_redes: carrossel com vídeo só vai para o Instagram (o Facebook não mistura foto e vídeo num post;
     gravado com o Facebook, ele vira erro definitivo e o card fica preso em Aprovado: achado 3 da Lupa no Correio). Conta também o
@@ -21,8 +22,10 @@ export const carrosselComVideoGuardado = (t: Pick<Tarefa, "formato" | "arquivos"
 
 /** Rede ESCOLHIDA na fila, enviando ou processando, com o card ainda em Aprovado. Linha de rede tirada do card não conta (achado b da Lupa):
     sem isso uma linha velha em "fila" fazia a tela recarregar a cada 15 s para sempre. Status desconhecido também não conta. */
-export const postando = (t: Tarefa) => t.etapa === "aprovado" && !!t.postagens?.some((p) =>
-  (t.postarRedes ?? ["instagram", "facebook"]).includes(p.rede) && (p.status === "fila" || p.status === "enviando" || p.status === "processando"));
+export const postando = (t: Tarefa, agora = new Date()) => t.etapa === "aprovado" && !!t.postagens?.some((p) =>
+  (t.postarRedes ?? ["instagram", "facebook"]).includes(p.rede) && (p.status === "enviando" || p.status === "processando"
+    // r2 B1 (037): "fila" com a data do post ainda por vir espera a hora marcada (tentar de novo com data futura): não é postando, e a tela não fica relendo
+    || (p.status === "fila" && !(t.postarEm && t.postarEm > horaDeBrasilia(agora.toISOString())))));
 
 type LinhaPostagem = { tarefa_id: string; rede: Postagem["rede"]; status: Postagem["status"]; link: string | null; erro: string | null; postado_em: string | null };
 /** Resultado da postagem automática por card. Antes do 019 a tabela não existe: segue sem nada (não derruba a carga). */

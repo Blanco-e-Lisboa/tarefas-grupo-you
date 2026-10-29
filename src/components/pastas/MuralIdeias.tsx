@@ -1,5 +1,6 @@
 "use client";
-import { useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { textoAoSair } from "./folha";
 import { useIdeias, type Ideia } from "@/lib/dados";
 import { CabecalhoColuna } from "@/components/ui/CabecalhoColuna";
 import { IconeRede } from "@/components/ui/Marca";
@@ -125,10 +126,17 @@ function Coluna({ cat, numero, itens, naPonta, podeMover, autoFocar, aoSalvar, a
 function Folha({ ideia, aoSalvar, aoApagar }: { ideia: Ideia; aoSalvar: (d: Dados) => void; aoApagar: () => void }) {
   const [confirmando, setConfirmando] = useState(false);
   const [tirando, setTirando] = useState<string | null>(null); // link esperando confirmação para sair
-  const { colar, bloco } = usePrints(ideia, aoSalvar);
-  const sair = (campo: "titulo" | "texto") => (e: { currentTarget: HTMLInputElement | HTMLTextAreaElement }) => {
-    const v = e.currentTarget.value.trim();
-    if (campo === "titulo" && !v) { e.currentTarget.value = ideia.titulo; return; } // ideia sem título não existe: volta o que estava
+  const { colar, bloco } = usePrints(ideia);
+  const titulo = useRef<HTMLTextAreaElement>(null), detalhe = useRef<HTMLTextAreaElement>(null);
+  const aoEntrar = useRef("");
+  // A3: o campo usa defaultValue (só vale na 1ª vez); a mudança de outra pessoa entra no campo que não está em uso
+  useEffect(() => {
+    for (const [el, v] of [[titulo.current, ideia.titulo], [detalhe.current, ideia.texto]] as const) if (el && el !== document.activeElement) el.value = v;
+  }, [ideia.titulo, ideia.texto]);
+  const entrar = (e: { currentTarget: HTMLTextAreaElement }) => { aoEntrar.current = e.currentTarget.value; };
+  const sair = (campo: "titulo" | "texto", e: { currentTarget: HTMLInputElement | HTMLTextAreaElement }) => {
+    const v = textoAoSair(aoEntrar.current, e.currentTarget.value);
+    if (v === null || (campo === "titulo" && !v)) { e.currentTarget.value = ideia[campo]; return; } // não mexeu (ou título vazio): mostra o que o banco tem
     if (v !== ideia[campo]) aoSalvar({ ...ideia, [campo]: v });
   };
   const links = ideia.links;
@@ -140,12 +148,12 @@ function Folha({ ideia, aoSalvar, aoApagar }: { ideia: Ideia; aoSalvar: (d: Dado
   return (
     <article className="mural-folha" onPaste={colar}>
       <div className="mural-folha-topo">
-        <textarea className="mural-titulo" aria-label="Título" rows={1} maxLength={120} defaultValue={ideia.titulo} onBlur={sair("titulo")} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), e.currentTarget.blur())} />
+        <textarea ref={titulo} className="mural-titulo" aria-label="Título" rows={1} maxLength={120} defaultValue={ideia.titulo} onFocus={entrar} onBlur={(e) => sair("titulo", e)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), e.currentTarget.blur())} />
         <button type="button" className="mural-apagar" aria-label={`Apagar ideia ${ideia.titulo}`} onClick={() => setConfirmando(true)}>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8h5.8l.6-8" /></svg>
         </button>
       </div>
-      <textarea className="mural-detalhe" aria-label="Detalhe" rows={2} placeholder="Detalhe" defaultValue={ideia.texto} onBlur={sair("texto")} />
+      <textarea ref={detalhe} className="mural-detalhe" aria-label="Detalhe" rows={2} placeholder="Detalhe" defaultValue={ideia.texto} onFocus={entrar} onBlur={(e) => sair("texto", e)} />
       {bloco}
       <div className="mural-rodape" data-vazio={!links.length ? true : undefined}>
         {links.map((l) => {

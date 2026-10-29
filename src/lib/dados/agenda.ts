@@ -5,10 +5,10 @@ import { useSyncExternalStore } from "react";
 import { supabase } from "@/lib/supabase/cliente";
 import { AVISOS, ligarTempoReal } from "./tempo-real";
 
-export const FONTES_AGENDA = ["natham", "matheus", "adrian", "lucas", "contato"] as const;
+export const FONTES_AGENDA = ["natham", "matheus", "adrian", "adrian_pessoal", "lucas", "contato"] as const; // M15: adrian_pessoal existe desde o 011
 export type FonteAgenda = (typeof FONTES_AGENDA)[number];
 /** Nome para o filtro "Agendas" do Calendário. contato = a agenda própria da contato@assessoriabeec.com.br. */
-export const ROTULO_AGENDA: Record<FonteAgenda, string> = { natham: "Natham", matheus: "Matheus", adrian: "Adrian", lucas: "Lucas", contato: "Beec (contato)" };
+export const ROTULO_AGENDA: Record<FonteAgenda, string> = { natham: "Natham", matheus: "Matheus", adrian: "Adrian", adrian_pessoal: "Adrian (pessoal)", lucas: "Lucas", contato: "Beec (contato)" };
 
 /** Compromisso do Google. Mesmo formato de data da Tarefa (hora de Brasília, sem fuso), então o Calendário desenha igual. */
 export type EventoAgenda = {
@@ -71,13 +71,16 @@ function iniciar() {
 }
 
 /** Busca de novo no banco. Se falhar (por exemplo, o 008 ainda não foi aplicado), mantém o que já tinha: o Calendário só fica sem a agenda. */
+let leitura = 0; // B11: só a leitura mais nova vale (uma anterior que chega depois é descartada)
 export async function recarregarAgenda() {
+  const n = ++leitura;
   const sb = supabase(), dia = (n: number) => new Date(Date.now() + n * 864e5).toISOString();
   const [e, a, g] = await Promise.all([
     sb.from("agenda_eventos").select("id, fontes, titulo, particular, inicio, fim, dia_inteiro, local").gte("inicio", dia(-DIAS_ATRAS)).lt("inicio", dia(DIAS_ADIANTE)).order("inicio"),
     sb.from("agenda_acesso").select("fonte"),
     sb.rpc("tarefas_no_google"), // 010; sem ele aplicado dá erro e o selo "Na agenda do Google" simplesmente não aparece
   ]);
+  if (n !== leitura) return;
   if (!g.error) confirmadas = new Set(g.data as string[]);
   if (e.error || a.error) return ouvintes.forEach((f) => f());
   const minhas = (a.data as { fonte: FonteAgenda }[]).map((x) => x.fonte);

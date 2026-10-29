@@ -84,6 +84,7 @@ async function subir(e: string): Promise<boolean> {
 // ---- leitura -------------------------------------------------------------------------------------------------------------
 export async function carregarIdeias(e: string) {
   const copiou = await subirIdeiasDoNavegador(e);
+  void apagarPrints([]); // M21: tenta de novo o que o armário não apagou da última vez
   const g = geracao.get(e) ?? 0;
   const sb = supabase();
   const ler = (cols: string) => sb.from("ideias").select(cols).eq("empresa_id", e).order("seq");
@@ -101,41 +102,76 @@ export async function carregarIdeias(e: string) {
   if (i.error) i = await ler("id, empresa_id, categoria, titulo, texto, link"); // ainda sem a coluna "links": lê o link único
   if (i.error || c.error) return falhou("Não consegui carregar as ideias. Recarregue a página.");
   if (!copiou) falhou("Não consegui copiar as ideias que estavam só neste navegador. Elas continuam guardadas; tento de novo na próxima abertura.");
-  if (pendentes.get(e) || (geracao.get(e) ?? 0) !== g) return;
+  // Leitura velha (uma gravação começou no meio, ou está no ar) não pisa na tela. r2 B5: mas é refeita, senão a mudança de outra pessoa
+  // que ela trazia ficava fora da tela até o próximo aviso. Gravação no ar: relê quando ela acabar; já acabou: relê agora.
+  if (pendentes.get(e) || (geracao.get(e) ?? 0) !== g) { if (pendentes.get(e)) relerDepois.add(e); else void carregarIdeias(e); return; }
   const ideias = (i.data as unknown as Linha[]).map(daLinha);
   trocar(e, () => ({ ideias, categorias: ideias.reduce((cats, x) => com(cats, x.categoria), (c.data ?? []).map((x) => x.nome as string)) }));
 }
 
 // ---- escrita otimista ----------------------------------------------------------------------------------------------------
-async function escrever(e: string, op: PromiseLike<{ error: unknown }>, desfazer: () => void, aviso: string) {
+async function escrever(e: string, op: PromiseLike<{ error: unknown }>, desfazer: () => void, aviso: string | (() => string)) {
   pendentes.set(e, (pendentes.get(e) ?? 0) + 1);
   geracao.set(e, (geracao.get(e) ?? 0) + 1);
   const { error } = await op;
   pendentes.set(e, pendentes.get(e)! - 1);
-  if (error) { desfazer(); falhou(aviso); }
+  if (error) { desfazer(); falhou(typeof aviso === "function" ? aviso() : aviso); }
+  if (!pendentes.get(e) && relerDepois.delete(e)) void carregarIdeias(e); // r2 B5: a leitura que esta gravação atropelou
+  return !error;
 }
+const relerDepois = new Set<string>(); // empresas cuja leitura foi descartada com gravação no ar
 const versao = (id: string) => { const v = (versoes.get(id) ?? 0) + 1; versoes.set(id, v); return v; };
 const colocar = (e: string, id: string, ideia: Ideia | undefined) =>
   trocar(e, (s) => ({ ...s, ideias: ideia ? (s.ideias.some((i) => i.id === id) ? s.ideias.map((i) => (i.id === id ? ideia : i)) : [...s.ideias, ideia]) : s.ideias.filter((i) => i.id !== id) }));
 
-/** Cria (sem id) ou edita (com id existente). Devolve a ideia já na tela; o banco confirma depois. */
-export function gravarIdeia(e: string, nova: Omit<Ideia, "id" | "empresaId" | "prints"> & { id?: string; prints?: string[] }): Ideia {
+/** Grava e devolve a ideia já na tela e a confirmação do banco (true = gravou). */
+function gravar(e: string, nova: Omit<Ideia, "id" | "empresaId" | "prints"> & { id?: string; prints?: string[] }) {
   const ideia: Ideia = { prints: [], ...nova, id: nova.id ?? crypto.randomUUID(), empresaId: e };
   const antes = (estado.get(e) ?? VAZIO).ideias.find((i) => i.id === ideia.id);
   const v = versao(ideia.id);
   colocar(e, ideia.id, ideia);
   trocar(e, (s) => ({ ...s, categorias: com(s.categorias, ideia.categoria) }));
-  void escrever(e, supabase().from("ideias").upsert(paraBanco(ideia), { onConflict: "id" }), () => versoes.get(ideia.id) === v && colocar(e, ideia.id, antes), "Não consegui salvar a ideia. Tente de novo.");
-  return ideia;
+  const ok = escrever(e, supabase().from("ideias").upsert(paraBanco(ideia), { onConflict: "id" }), () => versoes.get(ideia.id) === v && colocar(e, ideia.id, antes), "Não consegui salvar a ideia. Tente de novo.");
+  return { ideia, ok };
 }
+/** Cria (sem id) ou edita (com id existente). Devolve a ideia já na tela; o banco confirma depois. */
+export const gravarIdeia = (e: string, nova: Parameters<typeof gravar>[1]): Ideia => gravar(e, nova).ideia;
 
-/** Apaga uma ideia (Mural de folhas). */
+/** Apaga uma ideia (Mural de folhas). M21: os prints dela saem do armário só depois que o banco apagou a ideia (antes ficavam órfãos). */
 export function apagarIdeia(e: string, id: string) {
   const antes = (estado.get(e) ?? VAZIO).ideias.find((i) => i.id === id);
   if (!antes) return;
   const v = versao(id);
   colocar(e, id, undefined);
-  void escrever(e, supabase().from("ideias").delete().eq("id", id), () => versoes.get(id) === v && colocar(e, id, antes), "Não consegui apagar a ideia. Tente de novo.");
+  void escrever(e, supabase().from("ideias").delete().eq("id", id), () => versoes.get(id) === v && colocar(e, id, antes), "Não consegui apagar a ideia. Tente de novo.")
+    .then((ok) => { if (ok) void apagarPrints(antes.prints); });
+}
+
+/** r3 N4: muda SÓ a lista de prints de uma ideia que ainda existe (update; nunca cria). Antes ia pelo gravar (upsert): o print que terminava
+    de subir depois de a ideia ser apagada a recriava com o mesmo id. Apagada (aqui ou por outra pessoa): sai da tela e devolve false. */
+async function trocarPrints(e: string, id: string, mudar: (prints: string[]) => string[]): Promise<boolean> {
+  const atual = (estado.get(e) ?? VAZIO).ideias.find((i) => i.id === id);
+  if (!atual) return false;
+  const prints = mudar(atual.prints), v = versao(id);
+  colocar(e, id, { ...atual, prints });
+  let sumiu = false;
+  const op = supabase().from("ideias").update({ prints }).eq("id", id).select("id")
+    .then((r) => { sumiu = !r.error && !r.data?.length; return { error: r.error ?? (sumiu ? "ideia apagada" : null) }; });
+  return escrever(e, op, () => versoes.get(id) === v && colocar(e, id, sumiu ? undefined : atual),
+    () => (sumiu ? "Esta ideia foi apagada; o print não foi guardado." : "Não consegui guardar o print. Tente de novo."));
+}
+
+/** Print que terminou de subir entra na folha. Se a folha não existe mais (ou o banco recusou), o arquivo sai do armário.
+    r4 (novo 2): menos o que outra gravação desta folha, feita depois, já levou para o banco (ex.: tirar outro print grava a lista com este). */
+export async function anexarPrints(e: string, id: string, novos: string[]) {
+  if (await trocarPrints(e, id, (p) => [...p, ...novos])) return;
+  const ficou = (estado.get(e) ?? VAZIO).ideias.find((i) => i.id === id)?.prints ?? [];
+  await apagarPrints(novos.filter((n) => !ficou.includes(n)));
+}
+
+/** M21: tira o print da folha e só apaga o arquivo DEPOIS que o banco guardou a folha sem ele (se a gravação falha, o print volta inteiro). */
+export async function tirarPrint(e: string, ideia: Ideia, caminho: string) {
+  if (await trocarPrints(e, ideia.id, (p) => p.filter((x) => x !== caminho))) await apagarPrints([caminho]);
 }
 
 /** Nova coluna do mural; fica guardada mesmo vazia. */
@@ -214,8 +250,17 @@ export async function subirPrint(e: string, arquivo: File): Promise<string | nul
   return caminho;
 }
 
-/** Tira o arquivo do armário (a folha já deixou de listá-lo). Se falhar, sobra um arquivo solto, sem efeito na tela. */
-export const apagarPrint = (caminho: string) => void supabase().storage.from(BALDE).remove([caminho]);
+/** Tira os arquivos do armário (a folha já deixou de listá-los). M21 (conferência do Codex): confere a resposta; o que não saiu fica anotado
+    neste navegador e sai na próxima tentativa (a próxima leitura do mural, ou o próximo print apagado). */
+const A_APAGAR = "grade:prints-a-apagar";
+const lerAApagar = (): string[] => { try { return JSON.parse(localStorage.getItem(A_APAGAR) ?? "[]"); } catch { return []; } };
+export async function apagarPrints(caminhos: readonly string[]) {
+  const todos = [...new Set([...lerAApagar(), ...caminhos])];
+  if (!todos.length) return;
+  let falhou = true;
+  try { falhou = !!(await supabase().storage.from(BALDE).remove(todos)).error; } catch { /* sem rede: fica anotado */ }
+  try { if (falhou) localStorage.setItem(A_APAGAR, JSON.stringify(todos)); else localStorage.removeItem(A_APAGAR); } catch { /* sem armazenamento: não lembra */ }
+}
 
 /** Endereços temporários (1 hora) para mostrar os prints; o balde é privado. */
 export async function urlsDosPrints(caminhos: string[]): Promise<Map<string, string>> {

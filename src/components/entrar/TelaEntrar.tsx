@@ -25,8 +25,12 @@ export function TelaEntrar() {
 
   useEffect(() => {
     const link = dadosDoLink();
-    if (!link) return;
     let saiu = false;
+    // r2 B9: sem convite no endereço e já logado: vai para dentro (era o porteiro que fazia; ele não enxerga o convite, então ficou aqui)
+    if (!link) {
+      void supabase().auth.getSession().then(({ data }) => { if (!saiu && data.session) router.replace("/"); });
+      return () => { saiu = true; };
+    }
     void supabase().auth.setSession(link).then(({ error }) => {
       if (saiu) return;
       if (error) setErro("Este link venceu ou já foi usado. Peça um novo convite ao Natham.");

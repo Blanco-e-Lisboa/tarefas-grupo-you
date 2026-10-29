@@ -2,28 +2,30 @@
 // Sem Deno aqui dentro (index.ts liga o servidor): roda igual no Vitest com o banco, o Drive e a Meta falsos.
 // Log: só tarefa, rede, etapa e código. Nunca a chave, nunca o pedido inteiro.
 import { assinar, conferir, iguais } from "../_shared/google.ts";
-import { criarBanco, type Arq, type Banco, type Card, type Linha } from "./banco.ts";
-import { criarMeta, ErroDescartado, ErroIncerto, ErroLocal, traduzir, VERSAO } from "./meta.ts";
-import { facebook, instagram, type Ctx, type Resultado } from "./redes.ts";
+import { assinaturaDe, criarBanco, type Arq, type Banco, type Card, type Linha } from "./banco.ts";
+import { criarMeta, ErroCancelado, ErroDescartado, ErroIncerto, ErroLocal, traduzir, VERSAO } from "./meta.ts";
+import { facebook, instagram, pedidoNaMeta, type Ctx, type Resultado } from "./redes.ts";
 
 type Busca = typeof fetch;
 export type Deps = {
   env: (n: string) => string | undefined;
   fetch: Busca;
   baixarDrive: (driveId: string, range?: string) => Promise<Response>;
+  duracaoDrive: (driveId: string) => Promise<number | undefined>;
   paraJpg: (png: Uint8Array) => Promise<Uint8Array>;
   waitUntil: (p: Promise<unknown>) => void;
   agora?: () => number;
   dormir?: (ms: number) => Promise<void>;
   log?: (linha: string) => void;
 };
-type Fim = "postado" | "processando" | "fila" | "erro";
+type Fim = "postado" | "processando" | "fila" | "erro" | "cancelado";
 
 /** 1 entrega + até 4 conferências (vídeo processando ou função que caiu); passou disso, para com erro e aviso (combinado com a Alvenaria). */
 export const RODADAS_MAX = 5;
 const PRAZO_MS = 300_000; // a função vive até 400 s; conferências dentro da mesma execução param em 5 min
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const vazio = (status: number) => new Response(null, { status });
+const INCERTO_CANCELADO = "Estado incerto: a programação saiu no meio da postagem. Confira a rede antes de tentar de novo.";
 const VALIDADE_LINK = 2 * 3600_000; // a Meta baixa o vídeo no tempo dela; cobre as rodadas de conferência (5 x 12 min)
 const textoLink = (arquivo: string, ate: number) => `video.${arquivo}.${ate}`; // prefixo próprio: não vale como link da função drive
 
@@ -106,12 +108,13 @@ export function criarTrabalho(d: Deps) {
     const linhas = await banco.pegar(tarefa);
     if (!linhas.length) {
       // Nada a pegar: outra execução está nisso, ou tudo já saiu e só faltou mover o card (a mudança para Postado falhou antes).
-      const card = await banco.card(tarefa);
-      return log(null, card && (await concluir(banco, tarefa, card)) ? "card-postado" : "nada-a-pegar");
+      return log(null, (await concluir(banco, tarefa)) === "postado" ? "card-postado" : "nada-a-pegar");
     }
     const token = d.env("META_PUBLISHER_TOKEN") ?? "";
     const meta = criarMeta({ base: d.env("META_BASE") ?? `https://graph.facebook.com/${VERSAO}`, rupload: d.env("RUPLOAD_BASE") ?? "https://rupload.facebook.com", token, fetch: d.fetch });
     const [card, arqs] = await Promise.all([banco.card(tarefa), banco.arquivos(tarefa)]);
+    const assinatura = assinaturaDe(card, arqs); // N2: o conteúdo de agora; vai junto do rascunho ("<rascunho>|<assinatura>")
+    const comAssinatura = (conteiner: string) => `${conteiner}|${assinatura}`;
     let tokenPg: Promise<string> | undefined; // chave da página: pedida uma vez, só em memória
     const tokenPagina = () => (tokenPg ??= meta.get<{ access_token: string }>(pageId, "access_token").then((r) => r.access_token));
     let segredoLink: Promise<string | null> | undefined;
@@ -125,6 +128,22 @@ export function criarTrabalho(d: Deps) {
 
     async function umaRede(l: Linha): Promise<Fim> {
       const logRede = (etapa: string, codigo?: string | number) => log(l.rede, etapa, codigo);
+      // A5 (pente fino r1): o card deixou de valer. Nada pedido à Meta = a linha sai (o rascunho vence sozinho) e a próxima programação começa do zero.
+      // Pós-Codex (bug 1): rascunho já pedido à Meta (pub:, video-pub:, fotos:) NUNCA se apaga: vira "estado incerto" e guarda o rascunho, para a retomada conferir.
+      const cancelar = async (conteiner: string | null): Promise<Fim> => {
+        if (pedidoNaMeta(conteiner)) await banco.gravar(l.id, { status: "erro", erro: INCERTO_CANCELADO });
+        else await banco.apagarLinha(l.id);
+        logRede("cancelado");
+        return "cancelado";
+      };
+      // N2 (r3): rascunho ainda NÃO pedido à Meta, feito com outro conteúdo (legenda, mídia ou capa mudaram no card): descarta e refaz.
+      // Já pedido (pub:, video-pub:, fotos:): nunca se refaz (seria um segundo post). N2 (r4): sem assinatura (linha de antes do r3) também
+      // se refaz; o rascunho solto do Instagram antes passa pela Meta (pode já ter saído e a gravação de "postado" se perdido).
+      const [marca, dele] = (l.conteiner_id ?? "").split("|");
+      l.conteiner_id = marca || null;
+      const conferirVelho = !!l.conteiner_id && dele === undefined && l.rede === "instagram" && !/^(pub:|filhos:)/.test(l.conteiner_id);
+      if (l.conteiner_id && dele !== assinatura && !pedidoNaMeta(l.conteiner_id) && !conferirVelho) { logRede("rascunho-velho"); l.conteiner_id = null; }
+      const pegouCom = l.conteiner_id; // o ErroCancelado vem sempre ANTES de pedir nesta rodada: vale o que já estava pedido ao pegar
       logRede("pegou", l.rodadas);
       let r: Resultado;
       try {
@@ -132,14 +151,16 @@ export function criarTrabalho(d: Deps) {
         if (l.rodadas > RODADAS_MAX) throw new ErroLocal("Estado incerto: a postagem travou (a Meta não terminou de processar ou a função caiu várias vezes). Confira a rede antes de tentar de novo.");
         const c: Ctx = {
           meta, banco, card, arqs, linha: l, verdade: d.env("POSTAR_DE_VERDADE") === "sim", igId, pageId, prazo, agora, dormir,
-          baixarDrive: d.baixarDrive, paraJpg: d.paraJpg, tokenPagina, linkVideo, copias, log: logRede,
+          baixarDrive: d.baixarDrive, duracaoDrive: d.duracaoDrive, aindaVale: () => banco.aindaVale(tarefa, agora(), l.rede, assinatura),
+          paraJpg: d.paraJpg, tokenPagina, linkVideo, copias, log: logRede, conferirVelho,
           salvar: async (conteiner) => {
-            await banco.gravar(l.id, { conteiner_id: conteiner });
+            await banco.gravar(l.id, { conteiner_id: comAssinatura(conteiner) });
             l.conteiner_id = conteiner;
           },
         };
         r = l.rede === "instagram" ? await instagram(c) : await facebook(c);
       } catch (e) {
+        if (e instanceof ErroCancelado) return cancelar(pegouCom);
         const t = traduzir(e, token);
         // A mensagem vai junto (já sem chave nem links, ver traduzir): erro que volta para a fila não grava nada no banco (1º teste, 28/10)
         logRede("erro", `${(e as { codigo?: number }).codigo ?? (e instanceof Error ? e.name : "desconhecido")} · ${t.erro}`);
@@ -160,7 +181,8 @@ export function criarTrabalho(d: Deps) {
         return "postado";
       }
       if (r.fim === "processando") {
-        await banco.gravar(l.id, { status: "processando", conteiner_id: r.conteiner_id });
+        if (!(await banco.aindaVale(tarefa, agora(), l.rede, assinatura))) return cancelar(r.conteiner_id); // A5/N1/N2: saiu de Aprovado, a rede saiu ou o conteúdo mudou
+        await banco.gravar(l.id, { status: "processando", conteiner_id: comAssinatura(r.conteiner_id) });
         logRede("processando");
         return "processando";
       }
@@ -176,9 +198,12 @@ export function criarTrabalho(d: Deps) {
       const todas = arqs.filter((a) => a.tipo === "imagem").flatMap((a) => ["instagram", "facebook"].flatMap((r) => [`${tarefa}/${r}-${a.id}.jpg`, `${tarefa}/${r}-${a.id}.png`]));
       await banco.apagarCopias([...new Set([...copias, ...todas])]).catch(() => log(null, "copias-ficaram"));
     }
+    let falta = false;
     if (fins.includes("postado")) {
       try {
-        if (await concluir(banco, tarefa, card)) return log(null, "card-postado");
+        const fim = await concluir(banco, tarefa);
+        if (fim === "postado") return log(null, "card-postado");
+        falta = fim === "falta";
       } catch {
         log(null, "mover-falhou");
         return void (await banco.armar(tarefa, 5)); // a próxima chamada não pega linha nenhuma e só move o card
@@ -186,15 +211,22 @@ export function criarTrabalho(d: Deps) {
     }
     if (fins.includes("processando")) await banco.armar(tarefa, 5);
     else if (fins.includes("fila")) await banco.armar(tarefa, 10);
-    else await banco.desarmar(tarefa);
+    else if (falta) await banco.armar(tarefa, 1); // novo 1 (r4): rede acrescentada durante a publicação; a próxima volta a posta
+    else if (!fins.includes("cancelado")) await banco.desarmar(tarefa); // pós-Codex (bug 5): cancelado não desarma; o banco cuida do alarme (vídeo pendente rearma)
   }
 
-  /** Todas as redes do card saíram: move para Postado (o banco desarma o alarme e arma a limpeza de 7 dias). */
-  async function concluir(banco: Banco, tarefa: string, card: Card): Promise<boolean> {
-    const redes = await banco.redes(tarefa);
-    if (!card.postar_redes.every((r) => redes.some((p) => p.rede === r && p.status === "postado"))) return false;
+  /** Todas as redes escolhidas AGORA saíram: move para Postado (o banco desarma o alarme e arma a limpeza de 7 dias).
+      Novo 1 (r4): as redes são relidas aqui, não as do começo da volta. 'falta' = rede escolhida sem linha (acrescentada no meio). */
+  async function concluir(banco: Banco, tarefa: string): Promise<"postado" | "falta" | "espera"> {
+    const fim = await banco.concluir(tarefa);
+    if (fim) return fim;
+    // banco sem o 039: o mesmo, em duas gravações (a janela entre ler e mover é de milissegundos)
+    const [card, redes] = await Promise.all([banco.card(tarefa), banco.redes(tarefa)]);
+    if (!card) return "espera";
+    if (card.postar_redes.some((r) => !redes.some((p) => p.rede === r))) return "falta";
+    if (!card.postar_redes.every((r) => redes.some((p) => p.rede === r && p.status === "postado"))) return "espera";
     await banco.moverParaPostado(tarefa);
-    return true;
+    return "postado";
   }
 
   /** WhatsApp do Natham via n8n (brief: docs/levas/N8N-AVISO-POSTAGEM-BRIEF.md). Sem endereço cadastrado: só não avisa. */

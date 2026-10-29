@@ -38,3 +38,13 @@ describe("recarga de 15 s (achado b da Lupa): só rede escolhida em andamento, e
     expect(postando(card({ postarRedes: ["instagram"], postagens: [{ rede: "instagram", status: "enviando" }] }))).toBe(true);
   });
 });
+
+describe("r2 B1 (037): rede na fila esperando a hora marcada não é 'postando'", () => {
+  const card = (postarEm?: string) => ({ etapa: "aprovado", postarEm, postarRedes: ["instagram"], postagens: [{ rede: "instagram", status: "fila" }] }) as unknown as Tarefa;
+  const agora = new Date("2026-10-29T15:00:00Z"); // 12:00 em Brasília
+  it("fila com data futura espera; com data passada (ou sem data) está postando", () => {
+    expect(postando(card("2026-10-30T18:00"), agora)).toBe(false);
+    expect(postando(card("2026-10-29T11:00"), agora)).toBe(true);
+    expect(postando(card(), agora)).toBe(true);
+  });
+});

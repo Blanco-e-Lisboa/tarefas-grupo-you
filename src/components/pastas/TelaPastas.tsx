@@ -1,10 +1,12 @@
 "use client";
 import { useState } from "react";
 import {
-  apagarPastaLivre, arvoreDePastas, criarPastaLivre, ligarPermanente, ligarPermanentePastaLivre, pastasLivresDaEmpresa, renomearOcasiao, renomearPastaLivre,
+  apagarPastaLivre, arvoreDePastas, criarPastaLivre, ligarPermanente, ligarPermanentePastaLivre, pastasLivresDaEmpresa, podeAlterar, renomearOcasiao, renomearPastaLivre,
   useDocumentosSoltos, useEmpresas, useEu, useIdeias, useOcasioes, usePastasLivres, useTarefas,
-  type DocumentoSolto, type Empresa, type PastaConteudo, type PastaFormato, type PastaLivre, type PastaTema, type Tarefa,
+  type DocumentoSolto, type Empresa, type PastaConteudo, type PastaFormato, type PastaLivre, type PastaTema, type Tarefa, type TipoTarefa,
 } from "@/lib/dados";
+
+const TIPOS_DE_CARD: TipoTarefa[] = ["roteiro", "gravacao", "edicao", "postagem"]; // os mesmos da Esteira
 import { useFiltroEmpresa } from "@/lib/filtro-empresa";
 import { FiltroEmpresa } from "@/components/casca/FiltroEmpresa";
 import { Ficha, NOMES } from "@/components/ficha/Ficha";
@@ -252,7 +254,8 @@ function Faixa({ empresa }: { empresa: Empresa }) {
           <button type="button" className="btn btn-2" onClick={() => setAviso("")}>Entendi</button>
         </CardFlutuante>
       )}
-      {aberto && "conteudo" in aberto && <Ficha key={aberto.conteudo.id} tarefa={aberto.conteudo} aoFechar={() => setAberto(null)} />}
+      {/* B13: como na Esteira, quem não pode mexer abre só para olhar, e o Tipo só oferece os tipos de card */}
+      {aberto && "conteudo" in aberto && <Ficha key={aberto.conteudo.id} tarefa={aberto.conteudo} tipos={TIPOS_DE_CARD} soLer={!podeAlterar(aberto.conteudo, eu)} aoFechar={() => setAberto(null)} />}
       {aberto && "documento" in aberto && <CardDocumento doc={aberto.documento} aoFechar={() => setAberto(null)} />}
       {aberto && "ideias" in aberto && <MuralIdeias empresaId={empresa.id} nome={empresa.nome} tom={t.r} aoFechar={() => setAberto(null)} />}
     </div>

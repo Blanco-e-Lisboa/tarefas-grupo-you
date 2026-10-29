@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { EventoAgenda, Tarefa } from "@/lib/dados";
-import { cadernosQueVe, novaDoCaderno, semDataDoCaderno, doCaderno, encaixarCompromissos, jaTemTarefa, separarCompromissos, titulosParecidos, daMinhaLista, enviadaPorMim, somenteNoDeQuemRecebeu, ehConteudo, ehReuniao, eventosDoDia, duracaoDe, DURACAO_MAXIMA, duracaoLimite, duracaoLivre, duracaoMaxima, ocupadoAs, cabeNaFicha, fichaOcupada, emConflito, linhasDoBloco, montarGrade, montarSemData, msAteMeiaNoite, quandoEvento, rotuloSlot, SLOTS } from "./grade";
+import { cadernosQueVe, novaDoCaderno, semDataDoCaderno, doCaderno, encaixarCompromissos, jaTemTarefa, separarCompromissos, titulosParecidos, daMinhaLista, enviadaPorMim, somenteNoDeQuemRecebeu, ehConteudo, ehReuniao, eventosDoDia, duracaoDe, DURACAO_MAXIMA, duracaoLimite, duracaoLivre, duracaoMaxima, ocupadoAs, cabeNaFicha, fichaOcupada, emConflito, linhasDoBloco, montarGrade, montarSemData, msAteMeiaNoite, quandoEvento, rotuloSlot, SLOTS, copiaDoCaderno, duracaoQuerida, migrarFeitas } from "./grade";
 
 const t = (id: string, inicio?: string, diaInteiro = false) =>
   ({ id, titulo: id, tipo: "outro", empresaId: "e", responsavel: "natham", inicio, diaInteiro, cor: "etiqueta-1", links: [], arquivos: [] }) as Tarefa;
@@ -352,5 +352,78 @@ describe("escrever no caderno de outra pessoa", () => {
   });
   it("a tarefa escrita no caderno do Matheus vai para ele pelo mesmo envio de sempre (enviarPara)", () => {
     expect(novaDoCaderno("Gravar", "you", "matheus")).toMatchObject({ titulo: "Gravar", empresaId: "you", responsavel: "matheus", enviarPara: "matheus", tipo: "outro" });
+  });
+});
+
+describe("pente fino r1: cópias e arraste do Caderno", () => {
+  const tag = { id: "g-aprov", nome: "Esperando aprovação", cor: "etiqueta-1" as const, aprovacao: true };
+  const card = { ...t("c1", "2026-10-29T10:00"), empresaId: "you", tipo: "postagem", etapa: "aprovado", postarEm: "2026-10-30T18:00", legenda: "Oi",
+    arquivos: [{ id: "a1", nome: "v.mp4", driveId: "d1" }], postagens: [{ rede: "instagram", status: "postado" }], tags: ["g-aprov"] } as Tarefa;
+
+  it("A2: cópia de card Aprovado não nasce programada, nem com anexo ou post do original", () => {
+    const c = copiaDoCaderno(card, [card], [tag]);
+    expect(c).toMatchObject({ etapa: "roteiro", inicio: "2026-10-29T10:00", arquivos: [], titulo: "c1 - Cópia 1" });
+    expect(c.id).toBeUndefined();
+    expect(c.postarEm).toBeUndefined();
+    expect(c.legenda).toBeUndefined();
+    expect(c.postagens).toBeUndefined();
+    expect(c.tags).toBeUndefined();
+  });
+
+  it("A2/M17: cópia de tarefa do Caderno fica no caderno do dono (enviada por quem copiou) e sem os anexos do original", () => {
+    const daMatheus = { ...t("m1", "2026-10-29T10:00"), empresaId: "", dono: "matheus", enviadaPor: "natham", concluida: true, arquivos: [{ id: "a2", nome: "f.png", caminho: "x" }] } as Tarefa;
+    const c = copiaDoCaderno(daMatheus, [daMatheus], []);
+    expect(c).toMatchObject({ enviarPara: "matheus", arquivos: [], concluida: false, titulo: "m1" });
+    expect(c.id).toBeUndefined();
+  });
+
+  it("B9: tarefa que passa da meia-noite guarda a duração de verdade (antes virava 15 min)", () => {
+    expect(duracaoQuerida({ ...t("n", "2026-10-29T22:00"), fim: "2026-10-30T01:00" })).toBe(180);
+    expect(duracaoQuerida({ ...t("n", "2026-10-29T09:00"), fim: "2026-10-29T09:10" })).toBe(15);
+    expect(duracaoQuerida(t("n", "2026-10-29", true))).toBe(30);
+  });
+});
+
+describe("B6: migração das feitas antigas do navegador", () => {
+  const guarda = (inicial: string | null) => {
+    let v = inicial;
+    return { getItem: () => v, setItem: (_k: string, x: string) => { v = x; }, removeItem: () => { v = null; }, ler: () => v };
+  };
+  const minha = (id: string) => ({ ...t(id), dono: "natham" }) as Tarefa;
+  const nada = async () => false;
+  it("só tira da lista o que o banco confirmou; o recusado fica para a próxima abertura", async () => {
+    const g = guarda(JSON.stringify(["a", "b", "c", "sumiu"]));
+    const ts = [minha("a"), minha("b"), { ...minha("c"), concluida: true }];
+    const salvar = async (x: Tarefa) => (x.id === "b" ? null : x);
+    await migrarFeitas(g, ts, "natham", { salvar, marcarFeita: nada });
+    expect(JSON.parse(g.ler()!)).toEqual(["b"]);
+  });
+  it("tudo confirmado: a lista some", async () => {
+    const g = guarda(JSON.stringify(["a"]));
+    await migrarFeitas(g, [minha("a")], "natham", { salvar: async (x) => x, marcarFeita: nada });
+    expect(g.ler()).toBeNull();
+  });
+  it("L2: tarefa RECEBIDA (só leitura) marca pelo marcarFeita, nunca pelo salvar; a que não dá para marcar sai da lista", async () => {
+    const g = guarda(JSON.stringify(["r", "alheia"]));
+    const recebida = { ...t("r"), dono: "matheus", enviadaPor: "natham" } as Tarefa;
+    const alheia = { ...t("alheia"), dono: "natham" } as Tarefa;
+    const salvar = vi.fn(async (x: Tarefa) => x), marcarFeita = vi.fn(async () => true);
+    await migrarFeitas(g, [recebida, alheia], "matheus", { salvar, marcarFeita });
+    expect(salvar).not.toHaveBeenCalled();
+    expect(marcarFeita).toHaveBeenCalledWith("r", true);
+    expect(g.ler()).toBeNull();
+  });
+});
+
+describe("pente fino r2", () => {
+  it("L7: a cópia pelo ⋮ não leva a ida ao Google do original", () => {
+    const doCalendario = { ...t("g", "2026-10-29T10:00"), empresaId: "", dono: "natham", vaiProGoogle: true } as Tarefa;
+    expect(copiaDoCaderno(doCalendario, [doCalendario], []).vaiProGoogle).toBeUndefined();
+  });
+  it("L1: no Caderno, marcar horário, arrastar a linha e duração também respeitam o card programado", () => {
+    const fonte = readFileSync(new URL("./TelaTarefas.tsx", import.meta.url), "utf8");
+    const corpo = (inicio: string) => { const i = fonte.indexOf(inicio); return fonte.slice(i, fonte.indexOf("\n  };", i)); };
+    expect(corpo("const moverPara = ")).toContain("postProgramado(t)");
+    expect(fonte.split("\n").find((l) => l.includes("duracao: (id: string, min: number)"))).toContain("postProgramado(t)");
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { salvarEmpresa, useEmpresas, useEu, useTarefas } from "@/lib/dados";
 import { SeloEmpresa, temLogo } from "@/components/ui/Marca";
 import { BlocoGoogleDrive } from "./BlocoGoogleDrive";
@@ -17,20 +17,26 @@ export function TelaConfiguracoes() {
   const tarefas = useTarefas().filter((t) => (t.dono ?? t.responsavel) === eu || !!t.etapa);
   const [novoNome, setNovoNome] = useState("");
   const [erro, setErro] = useState("");
+  const [incluindo, setIncluindo] = useState(false);
+  const indo = useRef(false); // B15: dois cliques rápidos usavam a mesma lista velha e incluíam a empresa duas vezes
 
   async function incluir(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
     const nome = novoNome.trim();
-    if (!nome) return;
+    if (!nome || indo.current) return;
     if (empresas.some((empresa) => empresa.nome.toLocaleLowerCase("pt-BR") === nome.toLocaleLowerCase("pt-BR"))) {
       setErro("Essa empresa já está cadastrada.");
       return;
     }
+    indo.current = true;
+    setIncluindo(true);
     try {
       setErro("");
       await salvarEmpresa({ id: crypto.randomUUID(), nome, sigla: sigla(nome) });
       setNovoNome("");
     } catch { setErro("Não foi possível incluir a empresa. Tente novamente."); }
+    indo.current = false;
+    setIncluindo(false);
   }
 
   return (
@@ -60,7 +66,7 @@ export function TelaConfiguracoes() {
       <div className="config-incluir-sombra"><form className="config-incluir" onSubmit={(evento) => void incluir(evento)}>
         <h2>Incluir empresa</h2>
         <label htmlFor="config-nova-empresa">Nome da empresa</label>
-        <div><input id="config-nova-empresa" value={novoNome} onChange={(evento) => setNovoNome(evento.target.value)} placeholder="Ex.: Lavoro Piu" maxLength={80} required /><button className="config-botao" type="submit">Incluir</button></div>
+        <div><input id="config-nova-empresa" value={novoNome} onChange={(evento) => setNovoNome(evento.target.value)} placeholder="Ex.: Lavoro Piu" maxLength={80} required /><button className="config-botao" type="submit" disabled={incluindo}>{incluindo ? "Incluindo..." : "Incluir"}</button></div>
       </form></div>
     </section>
   );

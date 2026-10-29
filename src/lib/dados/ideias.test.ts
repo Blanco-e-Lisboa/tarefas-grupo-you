@@ -10,16 +10,22 @@ let recusar: Set<string>; // operações que o "banco" recusa: "upsert:ideias", 
 let seq: number;
 let segurar: Promise<void> | null = null; // se definido, os upserts em ideias só terminam quando ele resolver
 let semColuna = false; // banco antes do 025: não conhece a coluna "links"
+let removidos: string[] = []; // arquivos tirados do armário (Storage)
+let recusaSe: ((mudanca: L) => boolean) | null = null; // recusa só o update cuja mudança combina
 const fake = {
+  storage: { from: () => ({ remove: async (c: string[]) => (recusar.has("remove:armario") ? { error: "x" } : (removidos.push(...c), { error: null })) }) },
   from(t: string) {
     const filtros: [string, unknown][] = [];
+    let mudanca: L | null = null;
     let espera: Promise<void> | null = null;
     let fim: () => { data?: L[]; error: unknown } = () => ({ data: [], error: null });
     const q = {
-      select: (cols?: string) => (fim = () => semColuna && cols?.includes("links") ? { error: "42703" } : ({ data: tabelas[t].filter((l) => filtros.every(([k, v]) => l[k] === v)).toSorted((a, b) => (a.seq as number) - (b.seq as number)), error: null }), q),
+      // depois de um update, o select devolve as linhas mudadas (update().eq().select(): o banco diz quantas mudou)
+      select: (cols?: string) => (fim = mudanca ? (() => { if (recusar.has(`update:${t}`) || recusaSe?.(mudanca!)) return { error: "x" }; const ls = tabelas[t].filter((l) => filtros.every(([k, v]) => l[k] === v)); ls.forEach((l) => Object.assign(l, mudanca)); return { data: ls, error: null }; })
+        : () => semColuna && cols?.includes("links") ? { error: "42703" } : ({ data: tabelas[t].filter((l) => filtros.every(([k, v]) => l[k] === v)).toSorted((a, b) => (a.seq as number) - (b.seq as number)), error: null }), q),
       eq: (k: string, v: unknown) => (filtros.push([k, v]), q),
       order: () => q,
-      update: (campos: L) => (fim = () => (tabelas[t].filter((l) => filtros.every(([k, v]) => l[k] === v)).forEach((l) => Object.assign(l, campos)), { error: null }), q),
+      update: (campos: L) => ((mudanca = campos), (fim = () => (tabelas[t].filter((l) => filtros.every(([k, v]) => l[k] === v)).forEach((l) => Object.assign(l, campos)), { error: null })), q),
       delete: () => (fim = () => (recusar.has(`delete:${t}`) ? { error: "x" } : ((tabelas[t] = tabelas[t].filter((l) => !filtros.every(([k, v]) => l[k] === v))), { error: null })), q),
       upsert: (linhas: L | L[], o: { onConflict: string; ignoreDuplicates?: boolean }) => (espera = t === "ideias" ? segurar : null, fim = () => {
         if (recusar.has(`upsert:${t}`) || [].concat(linhas as never).some((l: L) => l.titulo === "falha") || (semColuna && [].concat(linhas as never).some((l: L) => "links" in l))) return { error: "x" };
@@ -50,11 +56,13 @@ beforeEach(() => {
   tabelas = { ideias: [], ideias_categorias: [] };
   recusar = new Set();
   segurar = null;
+  removidos = [];
+  recusaSe = null;
   falhou.mockClear();
   semColuna = false;
   seq = 0;
   guardado = new Map([[CHAVE, JSON.stringify(doNavegador)]]);
-  vi.stubGlobal("localStorage", { getItem: (k: string) => guardado.get(k) ?? null, setItem: (k: string, v: string) => void guardado.set(k, v) });
+  vi.stubGlobal("localStorage", { getItem: (k: string) => guardado.get(k) ?? null, setItem: (k: string, v: string) => void guardado.set(k, v), removeItem: (k: string) => void guardado.delete(k) });
 });
 
 describe("cópia do navegador para o banco", () => {
@@ -127,6 +135,68 @@ describe("mural no banco: salvar, mover e apagar", () => {
     await vi.waitFor(() => expect(tabelas.ideias).toHaveLength(0));
   });
 
+  it("M21: tirar print só apaga o arquivo depois de o banco guardar a folha; apagar a ideia leva os prints junto", async () => {
+    guardado.clear();
+    const m = await import("./ideias");
+    await m.carregarIdeias("you");
+    const a = m.gravarIdeia("you", { categoria: "Ganchos", titulo: "Com prints", texto: "", links: [], prints: ["ideias/you/1.png", "ideias/you/2.png"] });
+    await vi.waitFor(() => expect(tabelas.ideias).toHaveLength(1));
+    recusar.add("update:ideias");
+    await m.tirarPrint("you", a, "ideias/you/1.png");
+    expect(removidos).toEqual([]); // o banco recusou: o arquivo continua, e a folha volta a mostrá-lo
+    expect(m.ideiasDe("you").ideias[0].prints).toEqual(["ideias/you/1.png", "ideias/you/2.png"]);
+    recusar.clear();
+    await m.tirarPrint("you", a, "ideias/you/1.png");
+    expect(removidos).toEqual(["ideias/you/1.png"]);
+    m.apagarIdeia("you", a.id);
+    await vi.waitFor(() => expect(removidos).toEqual(["ideias/you/1.png", "ideias/you/2.png"]));
+  });
+
+  it("r3 N4: print que termina de subir depois de a ideia ser apagada não a recria; o arquivo sai do armário", async () => {
+    guardado.clear();
+    const m = await import("./ideias");
+    await m.carregarIdeias("you");
+    const a = m.gravarIdeia("you", { categoria: "Ganchos", titulo: "Vai sumir", texto: "", links: [] });
+    await vi.waitFor(() => expect(tabelas.ideias).toHaveLength(1));
+    tabelas.ideias = []; // outra pessoa apagou (a tela ainda mostra a folha)
+    await m.anexarPrints("you", a.id, ["ideias/you/novo.png"]);
+    expect(tabelas.ideias).toHaveLength(0); // não voltou
+    expect(m.ideiasDe("you").ideias).toHaveLength(0); // e sai da tela
+    expect(removidos).toEqual(["ideias/you/novo.png"]);
+    m.apagarIdeia("you", a.id); // já tinha sido apagada aqui mesmo: o print que chega depois também não a recria
+    await m.anexarPrints("you", a.id, ["ideias/you/outro.png"]);
+    expect(tabelas.ideias).toHaveLength(0);
+  });
+
+  it("r4 novo 2: acrescentar Q falha, mas tirar P (gravado depois, com Q) deu certo: Q continua no armário", async () => {
+    guardado.clear();
+    const m = await import("./ideias");
+    await m.carregarIdeias("you");
+    const a = m.gravarIdeia("you", { categoria: "Ganchos", titulo: "Dois prints", texto: "", links: [], prints: ["P"] });
+    await vi.waitFor(() => expect(tabelas.ideias).toHaveLength(1));
+    recusaSe = (x) => (x.prints as string[]).includes("P"); // a inclusão de Q ([P, Q]) falha; a retirada de P ([Q]) passa
+    await Promise.all([m.anexarPrints("you", a.id, ["Q"]), m.tirarPrint("you", m.ideiasDe("you").ideias[0], "P")]);
+    expect(tabelas.ideias[0].prints).toEqual(["Q"]);
+    expect(m.ideiasDe("you").ideias[0].prints).toEqual(["Q"]);
+    expect(removidos).toEqual(["P"]); // antes: P e Q apagados, com o banco apontando para Q
+  });
+
+  it("M21 (conferência do Codex): print que o armário não apagou fica anotado e sai na próxima leitura do mural", async () => {
+    guardado.clear();
+    const m = await import("./ideias");
+    await m.carregarIdeias("you");
+    const a = m.gravarIdeia("you", { categoria: "Ganchos", titulo: "Com print", texto: "", links: [], prints: ["ideias/you/1.png"] });
+    await vi.waitFor(() => expect(tabelas.ideias).toHaveLength(1));
+    recusar.add("remove:armario");
+    await m.tirarPrint("you", a, "ideias/you/1.png");
+    expect(removidos).toEqual([]);
+    expect(guardado.get("grade:prints-a-apagar")).toBe(JSON.stringify(["ideias/you/1.png"]));
+    recusar.clear();
+    await m.carregarIdeias("you");
+    await vi.waitFor(() => expect(removidos).toEqual(["ideias/you/1.png"]));
+    expect(guardado.has("grade:prints-a-apagar")).toBe(false);
+  });
+
   it("coluna nova fica guardada mesmo vazia", async () => {
     guardado.clear();
     const m = await import("./ideias");
@@ -166,6 +236,20 @@ describe("vários links por ideia (257)", () => {
 });
 
 describe("conferências da Lupa (261)", () => {
+  it("r2 B5: leitura descartada por uma gravação no ar é refeita quando ela acaba (a ideia nova de outra pessoa aparece)", async () => {
+    guardado.clear();
+    const m = await import("./ideias");
+    await m.carregarIdeias("you");
+    let soltarGravacao!: () => void;
+    segurar = new Promise<void>((ok) => (soltarGravacao = ok));
+    m.gravarIdeia("you", { categoria: "Ganchos", titulo: "minha", texto: "", links: [] }); // gravação no ar
+    tabelas.ideias.push({ id: "99999999-9999-4999-8999-999999999999", empresa_id: "you", categoria: "Ganchos", titulo: "do Matheus", texto: "", link: null, links: [], prints: [], seq: 99 });
+    await m.carregarIdeias("you"); // o aviso do tempo real: lê no meio da gravação e descarta
+    expect(m.ideiasDe("you").ideias.map((i) => i.titulo)).toEqual(["minha"]);
+    soltarGravacao();
+    await vi.waitFor(() => expect(m.ideiasDe("you").ideias.map((i) => i.titulo).sort()).toEqual(["do Matheus", "minha"]));
+  });
+
   it("falha antiga não desfaz a edição posterior que deu certo (achado 6)", async () => {
     guardado.clear();
     const m = await import("./ideias");

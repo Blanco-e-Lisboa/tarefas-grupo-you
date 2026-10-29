@@ -14,6 +14,8 @@ export class ErroMeta extends Error {
 export class ErroDescartado extends ErroMeta {}
 /** Problema nosso, que nova tentativa não resolve (formato, arquivo faltando). */
 export class ErroLocal extends Error {}
+/** A5 (pente fino r1): o card saiu de Aprovado, perdeu a data ou espera vídeo novo ANTES de publicar: nada saiu, a linha some. */
+export class ErroCancelado extends ErroLocal {}
 /** Não dá para saber se publicou (queda no meio do publicar sem como conferir): nunca repetir sozinho. */
 export class ErroIncerto extends Error {}
 

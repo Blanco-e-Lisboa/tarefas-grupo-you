@@ -100,6 +100,26 @@ export function criarPastas(d: { api: DriveApi; env: (n: string) => string | und
     await d.api.lixeira(x.drive_id);
     await s.apagar("drive_pastas", { chave });
   }
+  /** Apaga os arquivos do card. `soDrive` (a limpeza dos 7 dias): só o que está no DRIVE; anexo antigo do Supabase (sem drive_id) NUNCA é tocado, fica só na ficha.
+      Apagar o card de propósito (soDrive falso) leva também os anexos do Supabase. Devolve false se a limpeza parou porque o card saiu de Postado. */
+  async function esvaziar(tarefaId: string, soDrive = false): Promise<boolean> {
+    const s = servico();
+    // A6 (pente fino r1): a limpeza reconfere a etapa antes de CADA exclusão e antes da pasta; card que voltou para Edição fica com o que sobrou.
+    // shortcut: entre conferir e apagar sobra uma janela de milissegundos (o Drive não tem trava); o arquivo vai para a lixeira, que guarda 30 dias.
+    const segue = async () => !soDrive || (await cardDe(tarefaId)).etapa === "postado";
+    const linhas = await s.ler<{ id: string; drive_id: string | null; caminho: string | null }>("arquivos", { tarefa_id: tarefaId }, "id,drive_id,caminho");
+    // cada linha sai logo depois do seu arquivo: se algo falhar no meio, o que sobra no banco é exatamente o que ainda está no Drive (e dá para tentar de novo)
+    for (const l of linhas) if (l.drive_id) {
+      if (!(await segue())) return false;
+      await d.api.lixeira(l.drive_id); await s.apagar("arquivos", { id: l.id });
+    }
+    const sup = soDrive ? [] : linhas.flatMap((l) => (l.caminho ? [l.caminho] : []));
+    await s.removerObjetos("arquivos", sup);
+    if (sup.length) await s.apagar("arquivos", { tarefa_id: tarefaId });
+    if (!(await segue())) return false;
+    await tirarPastaDoConteudo(tarefaId);
+    return true;
+  }
   /** Renomeia as pastas dos conteúdos de um tema (o nome delas leva o tema), até LIMITE_RENOMEAR por chamada, a partir do `cursor` (id do último card visto).
       Devolve `cursor` (para a próxima chamada) e `restantes` (só pastas que existem) quando ainda falta; sem cursor = terminou. */
   async function renomearConteudos(temaId: string, depois = ""): Promise<{ restantes: number; cursor?: string }> {
@@ -120,5 +140,5 @@ export function criarPastas(d: { api: DriveApi; env: (n: string) => string | und
     }
     return { restantes: 0 };
   }
-  return { pastaEmpresa, renomearConteudos, temaDe, novoTema, pastaDeFormato, pastaDeTema, cardDe, pastaDoConteudo, rearmarLimpeza, tirarPastaDoConteudo };
+  return { pastaEmpresa, renomearConteudos, temaDe, novoTema, pastaDeFormato, pastaDeTema, cardDe, pastaDoConteudo, rearmarLimpeza, tirarPastaDoConteudo, esvaziar };
 }

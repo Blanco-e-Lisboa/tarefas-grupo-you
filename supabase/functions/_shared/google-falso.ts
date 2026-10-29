@@ -4,7 +4,11 @@
 
 export const BASE_FALSA = "https://google.falso";
 
-export type ArquivoFalso = { id: string; name: string; mimeType: string; parents: string[]; bytes: Uint8Array; trashed: boolean; folder: boolean; appProperties?: Record<string, string> };
+/** Bytes de mentira com a assinatura de um vídeo (WebM): a função drive confere os primeiros bytes (B3). Mínimo 4. */
+export const videoFalso = (n = 8) => { const b = new Uint8Array(Math.max(n, 4)); b.set([0x1a, 0x45, 0xdf, 0xa3]); return b; };
+/** Bytes de mentira com a assinatura de uma foto (JPEG). Mínimo 3. */
+export const fotoFalsa = (n = 8) => { const b = new Uint8Array(Math.max(n, 3)); b.set([0xff, 0xd8, 0xff]); return b; };
+export type ArquivoFalso = { id: string; name: string; mimeType: string; parents: string[]; bytes: Uint8Array; trashed: boolean; folder: boolean; appProperties?: Record<string, string>; duracaoMs?: number };
 export type Sessao = { id: string; arquivo: ArquivoFalso; recebido: number; total: number; origem?: string };
 
 export function criarGoogleFalso(opcoes: { clientId?: string; clientSecret?: string } = {}) {
@@ -111,7 +115,8 @@ export function criarGoogleFalso(opcoes: { clientId?: string; clientSecret?: str
         if (ini >= tam) return new Response(null, { status: 416, headers: { "content-range": `bytes */${tam}` } });
         return new Response(a.bytes.slice(ini, fim + 1), { status: 206, headers: { "content-type": a.mimeType, "content-length": String(fim - ini + 1), "content-range": `bytes ${ini}-${fim}/${tam}` } });
       }
-      return json({ id: a.id, name: a.name, parents: a.parents, size: String(a.bytes.length), mimeType: a.mimeType, trashed: a.trashed, appProperties: a.appProperties });
+      return json({ id: a.id, name: a.name, parents: a.parents, size: String(a.bytes.length), mimeType: a.mimeType, trashed: a.trashed, appProperties: a.appProperties,
+        ...(a.duracaoMs ? { videoMediaMetadata: { durationMillis: String(a.duracaoMs) } } : {}) });
     }
     return json({ error: "rota desconhecida" }, 404);
   }
